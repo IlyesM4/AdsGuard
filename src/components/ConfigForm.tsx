@@ -15,9 +15,7 @@ export const ConfigForm: React.FC<ConfigFormProps> = ({ onSave, initialConfig })
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      // Validate origin is from AI Studio preview or localhost
-      const origin = event.origin;
-      if (!origin.endsWith('.run.app') && !origin.includes('localhost')) {
+      if (event.origin !== window.location.origin) {
         return;
       }
 
