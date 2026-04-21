@@ -125,30 +125,44 @@ async function startServer() {
     }
 
     try {
-      // Use the stable List Opportunities endpoint - removing trailing slash
-      const ghlUrl = new URL('https://services.leadconnectorhq.com/opportunities');
-      ghlUrl.searchParams.append('location_id', locId);
-      
-      const response = await fetch(ghlUrl.toString(), {
-        headers: { 
-          Authorization: authHeader,
-          Version: '2021-07-28',
-          Accept: 'application/json'
-        },
-      });
+      const allOpportunities: any[] = [];
+      let page = 1;
+      const limit = 100;
+      const maxPages = 20; // safety cap: 2,000 opportunities max
 
-      const text = await response.text();
-      console.log(`[GHL Proxy] Opportunities Response (${response.status}):`, text.substring(0, 500));
-      
-      if (!response.ok) {
-        console.error(`GHL List Opps Error (${response.status}) URL: ${ghlUrl.toString()}`, text);
-        return res.status(response.status).json({ error: `GHL API Error: ${response.status}`, details: text });
+      while (page <= maxPages) {
+        const ghlUrl = new URL('https://services.leadconnectorhq.com/opportunities/search');
+        ghlUrl.searchParams.append('location_id', locId);
+        ghlUrl.searchParams.append('page', page.toString());
+        ghlUrl.searchParams.append('limit', limit.toString());
+
+        const response = await fetch(ghlUrl.toString(), {
+          headers: {
+            Authorization: authHeader,
+            Version: '2021-07-28',
+            Accept: 'application/json'
+          },
+        });
+
+        const text = await response.text();
+        console.log(`[GHL Proxy] Opportunities page ${page} (${response.status}):`, text.substring(0, 200));
+
+        if (!response.ok) {
+          console.error(`GHL Opportunities Error (${response.status}):`, text);
+          return res.status(response.status).json({ error: `GHL API Error: ${response.status}`, details: text });
+        }
+
+        const data = JSON.parse(text);
+        const batch: any[] = data.opportunities || data.data || [];
+        allOpportunities.push(...batch);
+
+        if (!data.meta?.nextPage || batch.length < limit) break;
+        page++;
       }
 
-      const data = JSON.parse(text);
-      const opportunities = data.opportunities || data.data || [];
-      
-      const filtered = opportunities.filter((o: any) => {
+      console.log(`[GHL Proxy] Opportunities total fetched: ${allOpportunities.length} across ${page} page(s)`);
+
+      const filtered = allOpportunities.filter((o: any) => {
         const dateStr = o.createdAt || o.dateAdded || o.date_added || o.updatedAt;
         if (!dateStr) return false;
         const created = new Date(dateStr).getTime();
@@ -176,52 +190,60 @@ async function startServer() {
     }
 
     try {
-      // GHL V2 Appointments list - removing primary trailing slash
-      const ghlUrl = new URL('https://services.leadconnectorhq.com/appointments');
-      ghlUrl.searchParams.append('locationId', locId);
-      
-      // Try millisecond timestamps for appointments
-      if (startTime) ghlUrl.searchParams.append('startDate', startTime.toString());
-      if (endTime) ghlUrl.searchParams.append('endDate', endTime.toString());
-      
-      const response = await fetch(ghlUrl.toString(), {
-        headers: { 
-          Authorization: authHeader,
-          Version: '2021-07-28',
-          Accept: 'application/json'
-        },
-      });
+      const allAppointments: any[] = [];
+      let page = 1;
+      const limit = 100;
+      const maxPages = 10; // safety cap: 1,000 appointments max
 
-      const text = await response.text();
-      console.log(`[GHL Proxy] Appointments Response (${response.status}) URL: ${ghlUrl.toString()}:`, text.substring(0, 500));
+      while (page <= maxPages) {
+        const ghlUrl = new URL('https://services.leadconnectorhq.com/appointments');
+        ghlUrl.searchParams.append('locationId', locId);
+        if (startTime) ghlUrl.searchParams.append('startDate', startTime.toString());
+        if (endTime) ghlUrl.searchParams.append('endDate', endTime.toString());
+        ghlUrl.searchParams.append('page', page.toString());
+        ghlUrl.searchParams.append('limit', limit.toString());
 
-      if (!response.ok) {
-        console.error(`GHL Appointments Error (${response.status}) URL: ${ghlUrl.toString()}:`, text);
-        // If 404, let's try WITH the trailing slash as a fallback
-        if (response.status === 404) {
-             const fallbackUrl = new URL('https://services.leadconnectorhq.com/appointments/');
-             fallbackUrl.searchParams.append('locationId', locId);
-             if (startTime) fallbackUrl.searchParams.append('startDate', startTime.toString());
-             if (endTime) fallbackUrl.searchParams.append('endDate', endTime.toString());
-             
-             const fallbackResponse = await fetch(fallbackUrl.toString(), {
-                headers: { 
-                  Authorization: authHeader,
-                  Version: '2021-07-28',
-                  Accept: 'application/json'
-                },
-             });
-             if (fallbackResponse.ok) {
-                const fallbackData = await fallbackResponse.json();
-                return res.json({ appointments: fallbackData.appointments || fallbackData.data || [] });
-             }
+        const response = await fetch(ghlUrl.toString(), {
+          headers: {
+            Authorization: authHeader,
+            Version: '2021-07-28',
+            Accept: 'application/json'
+          },
+        });
+
+        const text = await response.text();
+        console.log(`[GHL Proxy] Appointments page ${page} (${response.status}):`, text.substring(0, 200));
+
+        if (!response.ok) {
+          console.error(`GHL Appointments Error (${response.status}):`, text);
+          // If 404 on first page, retry with trailing slash as fallback
+          if (response.status === 404 && page === 1) {
+            const fallbackUrl = new URL('https://services.leadconnectorhq.com/appointments/');
+            fallbackUrl.searchParams.append('locationId', locId);
+            if (startTime) fallbackUrl.searchParams.append('startDate', startTime.toString());
+            if (endTime) fallbackUrl.searchParams.append('endDate', endTime.toString());
+
+            const fallbackResponse = await fetch(fallbackUrl.toString(), {
+              headers: { Authorization: authHeader, Version: '2021-07-28', Accept: 'application/json' },
+            });
+            if (fallbackResponse.ok) {
+              const fallbackData = await fallbackResponse.json();
+              return res.json({ appointments: fallbackData.appointments || fallbackData.data || [] });
+            }
+          }
+          return res.status(response.status).json({ error: `GHL API Error: ${response.status}`, details: text });
         }
-        
-        return res.status(response.status).json({ error: `GHL API Error: ${response.status}`, details: text });
+
+        const data = JSON.parse(text);
+        const batch: any[] = data.appointments || data.data || [];
+        allAppointments.push(...batch);
+
+        if (!data.meta?.nextPage || batch.length < limit) break;
+        page++;
       }
 
-      const data = JSON.parse(text);
-      res.json({ appointments: data.appointments || data.data || [] });
+      console.log(`[GHL Proxy] Appointments total fetched: ${allAppointments.length} across ${page} page(s)`);
+      res.json({ appointments: allAppointments });
     } catch (err: any) {
       console.error("GHL Appointments Proxy Error:", err);
       res.status(500).json({ error: err.message });
