@@ -190,10 +190,12 @@ async function startServer() {
     }
 
     try {
-      // GHL /calendars/events requires a calendarId — fetch all calendars first
+      // GHL /calendars/events filters by appointment date, not booking creation date.
+      // People often book appointments for future dates, so we extend endTime by +90 days
+      // to capture them. Filtering by creation date (dateAdded) happens in ghl.ts.
       const startISO = new Date(Number(startTime)).toISOString();
-      const endISO   = new Date(Number(endTime)).toISOString();
-      console.log(`[GHL Proxy] Calendar Events range: ${startISO} → ${endISO}`);
+      const endISO   = new Date(Number(endTime) + 90 * 24 * 60 * 60 * 1000).toISOString();
+      console.log(`[GHL Proxy] Calendar Events range: ${startISO} → ${endISO} (+90d buffer)`);
 
       const calendarsUrl = new URL('https://services.leadconnectorhq.com/calendars/');
       calendarsUrl.searchParams.append('locationId', locId);

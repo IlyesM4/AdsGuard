@@ -150,25 +150,35 @@ export function MeetingPrep({ fbData }: MeetingPrepProps) {
               </select>
             )}
 
-            {/* Niche tag — auto-detected, editable */}
+            {/* Niche tag — auto-detected, MUST be reviewed before calculating */}
             {selectedCampaignId && (
               <div className="mt-4">
                 <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block px-1">
-                  Detected Niche / GHL Tag
+                  GHL Contact Tag (Niche)
                 </label>
                 <div className="relative">
                   <input
                     type="text"
                     value={nicheTag}
                     onChange={e => setNicheTag(e.target.value)}
-                    placeholder="e.g. knee pain"
-                    className="w-full bg-gray-50 border border-gray-100 rounded-xl p-3 text-xs outline-none focus:ring-2 focus:ring-indigo-600 transition-all font-medium pr-10"
+                    placeholder="e.g. joint-pain"
+                    className={`w-full border rounded-xl p-3 text-xs outline-none focus:ring-2 focus:ring-indigo-600 transition-all font-medium pr-10 ${
+                      nicheTag.trim().split(/\s+/).length > 2
+                        ? 'bg-amber-50 border-amber-300'
+                        : 'bg-gray-50 border-gray-100'
+                    }`}
                   />
                   <Tag className="w-4 h-4 text-gray-300 absolute right-3 top-1/2 -translate-y-1/2" />
                 </div>
-                <p className="text-[9px] text-gray-400 mt-1 px-1">
-                  Auto-detected from campaign name. Edit if your GHL tag uses a different keyword.
-                </p>
+                {nicheTag.trim().split(/\s+/).length > 2 ? (
+                  <p className="text-[9px] text-amber-600 font-bold mt-1 px-1">
+                    ⚠️ Looks too long — edit to match your exact GHL tag (e.g. "joint-pain")
+                  </p>
+                ) : (
+                  <p className="text-[9px] text-gray-400 mt-1 px-1">
+                    Must match the tag on your GHL contacts exactly (hyphens or spaces both work).
+                  </p>
+                )}
               </div>
             )}
           </div>

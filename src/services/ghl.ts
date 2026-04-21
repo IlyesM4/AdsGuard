@@ -1,22 +1,36 @@
 import { GHLConfig, GHLMetrics } from '../types';
 
 const STOP_WORDS = new Set([
+  // Platforms
   'fb', 'facebook', 'meta', 'google', 'instagram', 'youtube', 'tiktok', 'bing',
+  // Campaign types
   'vsl', 'video', 'sales', 'letter', 'webinar', 'quiz',
   'campaign', 'campaigns', 'ads', 'ad', 'advertising',
   'retargeting', 'remarketing', 'conversion', 'conversions', 'awareness', 'traffic',
   'lead', 'leads', 'generation', 'gen',
   'landing', 'page', 'lander', 'funnel', 'offer', 'form',
+  // Versions / dates
   '2023', '2024', '2025', '2026',
   'v1', 'v2', 'v3', 'v4', 'v5', 'ver',
   'test', 'testing', 'new', 'old', 'updated', 'revised',
+  // Audience
   'cold', 'warm', 'hot', 'lookalike', 'lal', 'interest', 'broad', 'narrow',
+  // Geo
   'us', 'usa', 'canada', 'uk', 'au', 'australia', 'nz',
+  // Time
   'q1', 'q2', 'q3', 'q4',
   'jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
+  // Creative format
   'copy', 'creative', 'image', 'carousel', 'collection', 'reel',
   'phase', 'stage', 'round', 'wave',
+  // Common words
   'and', 'the', 'for', 'with', 'from', 'that',
+  // Business / clinic / brand terms
+  'integrated', 'medical', 'cellular', 'solutions', 'wellness', 'health',
+  'center', 'clinic', 'institute', 'practice', 'care', 'group', 'associates',
+  'services', 'specialist', 'specialists', 'management', 'advanced', 'premium',
+  'professional', 'certified', 'licensed', 'comprehensive', 'holistic',
+  'functional', 'natural', 'alternative', 'expert', 'experts',
 ]);
 
 /**
@@ -71,13 +85,19 @@ export async function fetchGHLData(
         (o.pipelineStageName || '').toLowerCase().includes('duplicate')
       ).length;
 
-  // Bookings = all calendar events fetched for the date range
-  const bookingsCount = appointments.length;
+  // Bookings = appointments CREATED (booked) within the selected date range.
+  // The server fetches +90 days forward so future-scheduled appointments are included;
+  // we filter here by dateAdded (when the booking was made).
+  const bookingsCount = appointments.filter((a: any) => {
+    const created = new Date(a.dateAdded || a.createdAt || 0).getTime();
+    return created >= startTime && created <= endTime;
+  }).length;
 
-  // Shows = events where the person attended
+  // Shows = appointments that OCCURRED in the date range AND the person attended.
   const showsCount = appointments.filter((a: any) => {
+    const apptTime = new Date(a.startTime || 0).getTime();
     const status = (a.appointmentStatus || a.status || '').toLowerCase();
-    return status === 'showed';
+    return apptTime >= startTime && apptTime <= endTime && status === 'showed';
   }).length;
 
   // Closes = won opportunities
