@@ -1,0 +1,5 @@
+{
+  "name": "AdGuard - Ads Management Tool",
+  "description": "A dashboard for managing Facebook Ads with automated alerts for high CPL and performance monitoring.",
+  "requestFramePermissions": []
+}
