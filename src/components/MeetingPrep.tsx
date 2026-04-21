@@ -89,7 +89,7 @@ export function MeetingPrep({ fbData }: MeetingPrepProps) {
   const metricCards = metrics ? [
     { label: 'Leads', value: metrics.leads, icon: UserCheck, color: 'text-indigo-600', bg: 'bg-indigo-50' },
     { label: 'Revenue', value: `$${metrics.revenue.toLocaleString()}`, icon: DollarSign, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-    { label: 'Booking %', value: `${metrics.bookingRate.toFixed(1)}%`, icon: TrendingUp, color: 'text-orange-600', bg: 'bg-orange-50' },
+    { label: 'Booking Rate', value: `${metrics.bookingRate.toFixed(1)}%`, icon: TrendingUp, color: 'text-orange-600', bg: 'bg-orange-50' },
     { label: 'ROAS', value: `${metrics.roas.toFixed(2)}x`, icon: Calculator, color: 'text-rose-600', bg: 'bg-rose-50' },
   ] : [];
 
@@ -256,7 +256,7 @@ export function MeetingPrep({ fbData }: MeetingPrepProps) {
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
                             <div className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                            <span className="text-sm font-bold text-gray-700">Total Leads</span>
+                            <span className="text-sm font-bold text-gray-700">Leads</span>
                           </div>
                         </td>
                         <td className="px-6 py-4 text-sm font-black text-gray-900">{metrics.leads}</td>
@@ -269,52 +269,78 @@ export function MeetingPrep({ fbData }: MeetingPrepProps) {
                       <tr>
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
-                            <div className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-                            <span className="text-sm font-bold text-gray-700">Disqualified</span>
+                            <div className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+                            <span className="text-sm font-bold text-gray-700">Duplicates</span>
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-sm font-black text-gray-900">{metrics.disqualified}</td>
+                        <td className="px-6 py-4 text-sm font-black text-gray-900">{metrics.duplicates}</td>
                         <td className="px-6 py-4 text-right text-xs text-gray-400 font-medium whitespace-nowrap">
-                          {metrics.leads > 0 ? ((metrics.disqualified / metrics.leads) * 100).toFixed(1) : 0}% of leads
+                          {metrics.leads > 0 ? ((metrics.duplicates / metrics.leads) * 100).toFixed(1) : 0}% of leads
                         </td>
                       </tr>
                       <tr>
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
                             <div className="w-1.5 h-1.5 rounded-full bg-orange-500" />
-                            <span className="text-sm font-bold text-gray-700">Schedules (Booked)</span>
+                            <span className="text-sm font-bold text-gray-700">Bookings</span>
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-sm font-black text-gray-900">{metrics.schedules}</td>
+                        <td className="px-6 py-4 text-sm font-black text-gray-900">{metrics.bookings}</td>
                         <td className="px-6 py-4 text-right">
                           <span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-orange-50 text-orange-700 text-[10px] font-black">
-                            ${metrics.cpSchedule.toFixed(2)} / Appt
+                            ${metrics.cpBooking.toFixed(2)} / Booking
                           </span>
                         </td>
                       </tr>
                       <tr>
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
+                            <div className="w-1.5 h-1.5 rounded-full bg-orange-300" />
+                            <span className="text-sm font-bold text-gray-700">Booking Rate</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-sm font-black text-orange-600">{metrics.bookingRate.toFixed(1)}%</td>
+                        <td className="px-6 py-4 text-right text-xs text-gray-400 font-medium whitespace-nowrap">
+                          {metrics.bookings} / {metrics.leads} leads
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
                             <div className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                            <span className="text-sm font-bold text-gray-700">Shows (Attended)</span>
+                            <span className="text-sm font-bold text-gray-700">Shows</span>
                           </div>
                         </td>
                         <td className="px-6 py-4 text-sm font-black text-gray-900">{metrics.shows}</td>
-                        <td className="px-6 py-4 text-right text-xs text-amber-600 font-bold">
-                          {metrics.showRate.toFixed(1)}% show rate
+                        <td className="px-6 py-4 text-right">
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 text-[10px] font-black">
+                            ${metrics.cpShow.toFixed(2)} / Show
+                          </span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-1.5 h-1.5 rounded-full bg-amber-300" />
+                            <span className="text-sm font-bold text-gray-700">Show Rate</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-sm font-black text-amber-600">{metrics.showRate.toFixed(1)}%</td>
+                        <td className="px-6 py-4 text-right text-xs text-gray-400 font-medium whitespace-nowrap">
+                          {metrics.shows} / {metrics.bookings} bookings
                         </td>
                       </tr>
                       <tr>
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
                             <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                            <span className="text-sm font-bold text-gray-700">Sales (Won)</span>
+                            <span className="text-sm font-bold text-gray-700">Closes</span>
                           </div>
                         </td>
                         <td className="px-6 py-4 text-sm font-black text-gray-900">{metrics.closes}</td>
                         <td className="px-6 py-4 text-right">
                           <span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 text-[10px] font-black">
-                            ${metrics.cpSale.toFixed(2)} / Sale
+                            ${metrics.cpClose.toFixed(2)} / Close
                           </span>
                         </td>
                       </tr>
@@ -322,11 +348,11 @@ export function MeetingPrep({ fbData }: MeetingPrepProps) {
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
                             <div className="w-1.5 h-1.5 rounded-full bg-gray-900" />
-                            <span className="text-sm font-black text-gray-900">Total Spend</span>
+                            <span className="text-sm font-black text-gray-900">Ad Spend</span>
                           </div>
                         </td>
                         <td className="px-6 py-4 text-sm font-black text-gray-900">${metrics.totalSpend.toFixed(2)}</td>
-                        <td className="px-6 py-4 text-right text-[10px] font-bold text-gray-400 uppercase">Meta Ad Spend</td>
+                        <td className="px-6 py-4 text-right text-[10px] font-bold text-gray-400 uppercase">Meta Ads</td>
                       </tr>
                     </tbody>
                   </table>

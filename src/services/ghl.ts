@@ -5,97 +5,92 @@ export async function fetchGHLData(
   days: number,
   fbSpend: number
 ): Promise<GHLMetrics> {
-  const endTime = new Date().getTime();
+  const endTime = Date.now();
   const startTime = endTime - days * 24 * 60 * 60 * 1000;
 
-  // Ideally these should be proxied to avoid CORS and protect tokens
-  // For now we will implement the logic and ensure it works with the server proxy
-  
-  const opportunities = await fetchFromGHL(config, 'opportunities', startTime, endTime);
-  const appointments = await fetchFromGHL(config, 'appointments', startTime, endTime);
+  const [opportunities, appointments] = await Promise.all([
+    fetchFromProxy(config, 'opportunities', startTime, endTime),
+    fetchFromProxy(config, 'appointments', startTime, endTime),
+  ]);
 
-  // Leads: We count all opportunities in specific stages or just total if user implies "New Lead" = Leads
-  // User said: "New Lead" = Leads, "Disqualified" = Disqualified, "Won" = Closes
-  // We'll normalize stage names for comparisons
-  
-  const leadsCount = opportunities.filter((o: any) => 
-    o.pipelineStageName?.toLowerCase().includes('new lead') || 
-    o.status?.toLowerCase() === 'open'
-  ).length;
+  // Leads = all opportunities created in the date range
+  const leadsCount = opportunities.length;
 
-  const disqualifiedCount = opportunities.filter((o: any) => 
-    o.pipelineStageName?.toLowerCase().includes('disqualified') ||
-    o.status?.toLowerCase() === 'abandoned' ||
-    o.status?.toLowerCase() === 'lost'
-  ).length;
+  // Duplicates = opportunities whose pipeline stage name contains "duplicate"
+  const duplicatesCount = opportunities.filter((o: any) => {
+    const stage = (o.pipelineStageName || '').toLowerCase();
+    return stage.includes('duplicate') || stage.includes('dup');
+  }).length;
 
+  // Bookings = all calendar events in the date range (regardless of show status)
+  const bookingsCount = appointments.length;
+
+  // Shows = calendar events where the person attended
+  const showsCount = appointments.filter((a: any) => {
+    const status = (a.appointmentStatus || a.status || '').toLowerCase();
+    return status === 'showed';
+  }).length;
+
+  // Closes = won opportunities
   const wonOpportunities = opportunities.filter((o: any) => o.status?.toLowerCase() === 'won');
   const closesCount = wonOpportunities.length;
-  const revenue = wonOpportunities.reduce((sum: number, o: any) => sum + (parseFloat(o.monetaryValue) || 0), 0);
+  const revenue = wonOpportunities.reduce(
+    (sum: number, o: any) => sum + (parseFloat(o.monetaryValue) || 0),
+    0
+  );
 
-  const schedulesCount = appointments.filter((a: any) => a.status?.toLowerCase() === 'confirmed').length;
-  const showsCount = appointments.filter((a: any) => a.status?.toLowerCase() === 'showed').length;
+  const bookingRate = leadsCount > 0 ? (bookingsCount / leadsCount) * 100 : 0;
+  const showRate = bookingsCount > 0 ? (showsCount / bookingsCount) * 100 : 0;
 
-  const bookingRate = leadsCount > 0 ? (schedulesCount / leadsCount) * 100 : 0;
-  const showRate = schedulesCount > 0 ? (showsCount / schedulesCount) * 100 : 0;
-
-  const cpLead = leadsCount > 0 ? fbSpend / leadsCount : 0;
-  const cpSchedule = schedulesCount > 0 ? fbSpend / schedulesCount : 0;
-  const cpSale = closesCount > 0 ? fbSpend / closesCount : 0;
-  const roas = fbSpend > 0 ? revenue / fbSpend : 0;
+  const cpLead    = leadsCount    > 0 ? fbSpend / leadsCount    : 0;
+  const cpBooking = bookingsCount > 0 ? fbSpend / bookingsCount : 0;
+  const cpShow    = showsCount    > 0 ? fbSpend / showsCount    : 0;
+  const cpClose   = closesCount   > 0 ? fbSpend / closesCount   : 0;
+  const roas      = fbSpend       > 0 ? revenue / fbSpend       : 0;
 
   return {
     leads: leadsCount,
-    disqualified: disqualifiedCount,
+    duplicates: duplicatesCount,
+    bookings: bookingsCount,
+    shows: showsCount,
     closes: closesCount,
     revenue,
-    schedules: schedulesCount,
-    shows: showsCount,
     bookingRate,
     showRate,
     cpLead,
-    cpSchedule,
-    cpSale,
+    cpBooking,
+    cpShow,
+    cpClose,
     roas,
-    totalSpend: fbSpend
+    totalSpend: fbSpend,
   };
 }
 
-async function fetchFromGHL(config: GHLConfig, type: 'opportunities' | 'appointments', startTime: number, endTime: number) {
-  // Ensure we format the token correctly for GHL
-  // PIT tokens and OAuth tokens both use Bearer, but we'll prune whitespace
+async function fetchFromProxy(
+  config: GHLConfig,
+  type: 'opportunities' | 'appointments',
+  startTime: number,
+  endTime: number
+): Promise<any[]> {
   const rawToken = config.accessToken.trim();
   const token = rawToken.startsWith('Bearer ') ? rawToken : `Bearer ${rawToken}`;
 
   const params = new URLSearchParams({
     locationId: config.locationId.trim(),
     startTime: startTime.toString(),
-    endTime: endTime.toString()
+    endTime: endTime.toString(),
   });
 
-  const url = `/api/ghl/${type}?${params.toString()}`;
-  const response = await fetch(url, {
-    headers: {
-      'Authorization': token
-    }
+  const response = await fetch(`/api/ghl/${type}?${params}`, {
+    headers: { Authorization: token },
   });
-
-  const contentType = response.headers.get("content-type");
-  const isJson = contentType && contentType.includes("application/json");
 
   if (!response.ok) {
-    let errorMessage = `Failed to fetch ${type} from GHL`;
-    if (isJson) {
-      const errorData = await response.json();
-      errorMessage = errorData.error || errorMessage;
-    } else {
-      errorMessage = await response.text() || errorMessage;
-    }
-    throw new Error(errorMessage);
-  }
-
-  if (!isJson) {
-    throw new Error(`Expected JSON response from ${type} but received something else.`);
+    const contentType = response.headers.get('content-type') || '';
+    const body = contentType.includes('application/json')
+      ? (await response.json()).error
+      : await response.text();
+    throw new Error(body || `Failed to fetch ${type} from GHL`);
   }
 
   const data = await response.json();

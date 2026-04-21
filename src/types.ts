@@ -56,16 +56,17 @@ export interface GHLConfig {
 
 export interface GHLMetrics {
   leads: number;
-  disqualified: number;
+  duplicates: number;
+  bookings: number;
+  shows: number;
   closes: number;
   revenue: number;
-  schedules: number;
-  shows: number;
   bookingRate: number;
   showRate: number;
   cpLead: number;
-  cpSchedule: number;
-  cpSale: number;
+  cpBooking: number;
+  cpShow: number;
+  cpClose: number;
   roas: number;
   totalSpend: number;
 }

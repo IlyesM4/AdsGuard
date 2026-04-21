@@ -196,10 +196,11 @@ async function startServer() {
       const maxPages = 10; // safety cap: 1,000 appointments max
 
       while (page <= maxPages) {
-        const ghlUrl = new URL('https://services.leadconnectorhq.com/appointments');
+        // /calendars/events is the correct GHL v2 endpoint for appointment data
+        const ghlUrl = new URL('https://services.leadconnectorhq.com/calendars/events');
         ghlUrl.searchParams.append('locationId', locId);
-        if (startTime) ghlUrl.searchParams.append('startDate', startTime.toString());
-        if (endTime) ghlUrl.searchParams.append('endDate', endTime.toString());
+        if (startTime) ghlUrl.searchParams.append('startTime', startTime.toString());
+        if (endTime) ghlUrl.searchParams.append('endTime', endTime.toString());
         ghlUrl.searchParams.append('page', page.toString());
         ghlUrl.searchParams.append('limit', limit.toString());
 
@@ -212,30 +213,15 @@ async function startServer() {
         });
 
         const text = await response.text();
-        console.log(`[GHL Proxy] Appointments page ${page} (${response.status}):`, text.substring(0, 200));
+        console.log(`[GHL Proxy] Calendar Events page ${page} (${response.status}):`, text.substring(0, 200));
 
         if (!response.ok) {
-          console.error(`GHL Appointments Error (${response.status}):`, text);
-          // If 404 on first page, retry with trailing slash as fallback
-          if (response.status === 404 && page === 1) {
-            const fallbackUrl = new URL('https://services.leadconnectorhq.com/appointments/');
-            fallbackUrl.searchParams.append('locationId', locId);
-            if (startTime) fallbackUrl.searchParams.append('startDate', startTime.toString());
-            if (endTime) fallbackUrl.searchParams.append('endDate', endTime.toString());
-
-            const fallbackResponse = await fetch(fallbackUrl.toString(), {
-              headers: { Authorization: authHeader, Version: '2021-07-28', Accept: 'application/json' },
-            });
-            if (fallbackResponse.ok) {
-              const fallbackData = await fallbackResponse.json();
-              return res.json({ appointments: fallbackData.appointments || fallbackData.data || [] });
-            }
-          }
+          console.error(`GHL Calendar Events Error (${response.status}):`, text);
           return res.status(response.status).json({ error: `GHL API Error: ${response.status}`, details: text });
         }
 
         const data = JSON.parse(text);
-        const batch: any[] = data.appointments || data.data || [];
+        const batch: any[] = data.events || data.appointments || data.data || [];
         allAppointments.push(...batch);
 
         if (!data.meta?.nextPage || batch.length < limit) break;
