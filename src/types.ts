@@ -69,6 +69,8 @@ export interface GHLMetrics {
   cpClose: number;
   roas: number;
   totalSpend: number;
+  campaignName: string;
+  nicheTag: string;
 }
 
 export interface MeetingPrepData {

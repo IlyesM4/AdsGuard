@@ -256,6 +256,84 @@ async function startServer() {
     }
   });
 
+  // Proxy to fetch GHL Contacts filtered by niche tag
+  app.get("/api/ghl/contacts", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    const { locationId, tag, startTime, endTime } = req.query;
+    const locId = locationId as string;
+
+    if (!authHeader) return res.status(401).json({ error: "Missing authorization header" });
+    if (!locId) return res.status(422).json({ error: "Location ID is required." });
+
+    try {
+      const allContacts: any[] = [];
+      let startAfterId: string | undefined;
+      const limit = 100;
+      const maxPages = 30;
+      // Normalize tag: "knee-pain" and "knee pain" both become "knee pain" for comparison
+      const normalizedTag = (tag as string || '').toLowerCase().replace(/-/g, ' ').trim();
+
+      console.log(`[GHL Proxy] Contacts search: tag="${tag}", range=${startTime}→${endTime}`);
+
+      for (let page = 0; page < maxPages; page++) {
+        const ghlUrl = new URL('https://services.leadconnectorhq.com/contacts/');
+        ghlUrl.searchParams.append('locationId', locId);
+        ghlUrl.searchParams.append('limit', limit.toString());
+        // GHL query searches across name, email, phone, and tags
+        if (tag) ghlUrl.searchParams.append('query', tag as string);
+        if (startAfterId) ghlUrl.searchParams.append('startAfterId', startAfterId);
+
+        const response = await fetch(ghlUrl.toString(), {
+          headers: { Authorization: authHeader, Version: '2021-07-28', Accept: 'application/json' },
+        });
+
+        if (!response.ok) {
+          const text = await response.text();
+          console.error(`GHL Contacts Error (${response.status}):`, text);
+          return res.status(response.status).json({ error: `GHL Contacts Error: ${response.status}`, details: text });
+        }
+
+        const data = await response.json();
+        const contacts: any[] = data.contacts || [];
+
+        // Filter: contact must have a tag that fuzzy-matches the niche
+        const tagFiltered = normalizedTag
+          ? contacts.filter((c: any) => {
+              const contactTags: string[] = (c.tags || []).map((t: string) =>
+                t.toLowerCase().replace(/-/g, ' ')
+              );
+              return contactTags.some(t => t.includes(normalizedTag) || normalizedTag.includes(t));
+            })
+          : contacts;
+
+        // Filter by date range (dateAdded)
+        const start = Number(startTime);
+        const end = Number(endTime);
+        const dateFiltered = (startTime && endTime)
+          ? tagFiltered.filter((c: any) => {
+              const dateStr = c.dateAdded || c.createdAt;
+              if (!dateStr) return false;
+              const created = new Date(dateStr).getTime();
+              return created >= start && created <= end;
+            })
+          : tagFiltered;
+
+        allContacts.push(...dateFiltered);
+
+        // GHL cursor pagination
+        if (contacts.length < limit) break;
+        startAfterId = contacts[contacts.length - 1]?.id;
+        if (!startAfterId) break;
+      }
+
+      console.log(`[GHL Proxy] Contacts with tag "${tag}": ${allContacts.length}`);
+      res.json({ contacts: allContacts });
+    } catch (err: any) {
+      console.error("GHL Contacts Proxy Error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Proxy to fetch Google Sheets list
   app.get("/api/google/sheets", async (req, res) => {
     const authHeader = req.headers.authorization;
