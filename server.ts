@@ -195,12 +195,17 @@ async function startServer() {
       const limit = 100;
       const maxPages = 10; // safety cap: 1,000 appointments max
 
+      // GHL /calendars/events requires ISO datetime strings, not ms timestamps
+      const startISO = new Date(Number(startTime)).toISOString();
+      const endISO   = new Date(Number(endTime)).toISOString();
+      console.log(`[GHL Proxy] Calendar Events range: ${startISO} → ${endISO}`);
+
       while (page <= maxPages) {
         // /calendars/events is the correct GHL v2 endpoint for appointment data
         const ghlUrl = new URL('https://services.leadconnectorhq.com/calendars/events');
         ghlUrl.searchParams.append('locationId', locId);
-        if (startTime) ghlUrl.searchParams.append('startTime', startTime.toString());
-        if (endTime) ghlUrl.searchParams.append('endTime', endTime.toString());
+        ghlUrl.searchParams.append('startTime', startISO);
+        ghlUrl.searchParams.append('endTime', endISO);
         ghlUrl.searchParams.append('page', page.toString());
         ghlUrl.searchParams.append('limit', limit.toString());
 
@@ -216,7 +221,7 @@ async function startServer() {
         console.log(`[GHL Proxy] Calendar Events page ${page} (${response.status}):`, text.substring(0, 200));
 
         if (!response.ok) {
-          console.error(`GHL Calendar Events Error (${response.status}):`, text);
+          console.error(`GHL Calendar Events Error (${response.status}) URL: ${ghlUrl.toString()} — Body: ${text}`);
           return res.status(response.status).json({ error: `GHL API Error: ${response.status}`, details: text });
         }
 
