@@ -190,50 +190,65 @@ async function startServer() {
     }
 
     try {
-      const allAppointments: any[] = [];
-      let page = 1;
-      const limit = 100;
-      const maxPages = 10; // safety cap: 1,000 appointments max
-
-      // GHL /calendars/events requires ISO datetime strings, not ms timestamps
+      // GHL /calendars/events requires a calendarId — fetch all calendars first
       const startISO = new Date(Number(startTime)).toISOString();
       const endISO   = new Date(Number(endTime)).toISOString();
       console.log(`[GHL Proxy] Calendar Events range: ${startISO} → ${endISO}`);
 
-      while (page <= maxPages) {
-        // /calendars/events is the correct GHL v2 endpoint for appointment data
-        const ghlUrl = new URL('https://services.leadconnectorhq.com/calendars/events');
-        ghlUrl.searchParams.append('locationId', locId);
-        ghlUrl.searchParams.append('startTime', startISO);
-        ghlUrl.searchParams.append('endTime', endISO);
-        ghlUrl.searchParams.append('page', page.toString());
-        ghlUrl.searchParams.append('limit', limit.toString());
+      const calendarsUrl = new URL('https://services.leadconnectorhq.com/calendars/');
+      calendarsUrl.searchParams.append('locationId', locId);
 
-        const response = await fetch(ghlUrl.toString(), {
-          headers: {
-            Authorization: authHeader,
-            Version: '2021-07-28',
-            Accept: 'application/json'
-          },
-        });
+      const calendarsRes = await fetch(calendarsUrl.toString(), {
+        headers: { Authorization: authHeader, Version: '2021-07-28', Accept: 'application/json' },
+      });
 
-        const text = await response.text();
-        console.log(`[GHL Proxy] Calendar Events page ${page} (${response.status}):`, text.substring(0, 200));
-
-        if (!response.ok) {
-          console.error(`GHL Calendar Events Error (${response.status}) URL: ${ghlUrl.toString()} — Body: ${text}`);
-          return res.status(response.status).json({ error: `GHL API Error: ${response.status}`, details: text });
-        }
-
-        const data = JSON.parse(text);
-        const batch: any[] = data.events || data.appointments || data.data || [];
-        allAppointments.push(...batch);
-
-        if (!data.meta?.nextPage || batch.length < limit) break;
-        page++;
+      if (!calendarsRes.ok) {
+        const text = await calendarsRes.text();
+        console.error(`GHL Calendars list error (${calendarsRes.status}):`, text);
+        return res.status(calendarsRes.status).json({ error: `GHL Calendars Error: ${calendarsRes.status}`, details: text });
       }
 
-      console.log(`[GHL Proxy] Appointments total fetched: ${allAppointments.length} across ${page} page(s)`);
+      const calendarsData = await calendarsRes.json();
+      const calendars: any[] = calendarsData.calendars || [];
+      console.log(`[GHL Proxy] Found ${calendars.length} calendar(s) for location`);
+
+      if (calendars.length === 0) {
+        return res.json({ appointments: [] });
+      }
+
+      // Fetch events for every calendar in parallel (no page/limit — not supported)
+      const eventBatches = await Promise.all(
+        calendars.map(async (cal: any) => {
+          const eventsUrl = new URL('https://services.leadconnectorhq.com/calendars/events');
+          eventsUrl.searchParams.append('locationId', locId);
+          eventsUrl.searchParams.append('calendarId', cal.id);
+          eventsUrl.searchParams.append('startTime', startISO);
+          eventsUrl.searchParams.append('endTime', endISO);
+
+          const res2 = await fetch(eventsUrl.toString(), {
+            headers: { Authorization: authHeader, Version: '2021-07-28', Accept: 'application/json' },
+          });
+
+          if (!res2.ok) {
+            const t = await res2.text();
+            console.warn(`[GHL Proxy] Events for calendar ${cal.id} (${res2.status}):`, t.substring(0, 200));
+            return [];
+          }
+
+          const d = await res2.json();
+          return d.events || d.appointments || d.data || [];
+        })
+      );
+
+      // Flatten + deduplicate by event id
+      const seen = new Set<string>();
+      const allAppointments = eventBatches.flat().filter((e: any) => {
+        if (seen.has(e.id)) return false;
+        seen.add(e.id);
+        return true;
+      });
+
+      console.log(`[GHL Proxy] Appointments total: ${allAppointments.length} across ${calendars.length} calendar(s)`);
       res.json({ appointments: allAppointments });
     } catch (err: any) {
       console.error("GHL Appointments Proxy Error:", err);
