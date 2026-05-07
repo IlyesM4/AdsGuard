@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
+import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
 
@@ -27,6 +28,58 @@ async function startServer() {
   // API routes
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  // Meeting Prep generation
+  app.post("/api/generate-meeting-prep", express.json(), async (req, res) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(400).json({ error: "GEMINI_API_KEY is not set in environment variables." });
+    }
+
+    const { rows, headers, template } = req.body;
+    if (!rows || !template) {
+      return res.status(400).json({ error: "Missing rows or template in request body." });
+    }
+
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+
+      const csvTable = [
+        headers.join(", "),
+        ...rows.map((r: Record<string, string>) => headers.map((h: string) => r[h] ?? "").join(", ")),
+      ].join("\n");
+
+      const prompt = `You are a professional meeting preparation assistant for a digital marketing agency.
+
+Using the CSV data below, fill in the provided template to create a polished, ready-to-use meeting prep document.
+
+CSV Data:
+${csvTable}
+
+Template to fill in:
+${template}
+
+Rules:
+- Follow the template structure exactly — do not add or remove sections
+- Replace all placeholders with real values from the CSV data
+- Calculate any derived metrics (rates, averages, totals) if needed
+- Format numbers clearly: currencies as $X,XXX, percentages as X%, plain counts as whole numbers
+- If a field has no matching CSV data, write "N/A"
+- Write only the completed document — no preamble, no explanation
+
+Completed meeting prep:`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-2.0-flash",
+        contents: prompt,
+      });
+
+      res.json({ output: response.text });
+    } catch (err: any) {
+      console.error("Gemini generation error:", err);
+      res.status(500).json({ error: err.message || "Generation failed" });
+    }
   });
 
   // Google Auth URL

@@ -205,7 +205,7 @@ export default function App() {
               {activeTab === 'alerts' ? (
                 <HighCPLAlert data={data} threshold={threshold} />
               ) : activeTab === 'meeting' ? (
-                <MeetingPrep fbData={data} />
+                <MeetingPrep />
               ) : (
                 <div className="space-y-8">
                   <div className="flex items-center justify-between">

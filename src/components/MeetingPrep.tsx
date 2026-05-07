@@ -1,415 +1,434 @@
-import React, { useState, useMemo } from 'react';
-import {
-  Settings,
-  Loader2,
-  ArrowRight,
-  Monitor,
-  AlertCircle,
-  Calendar,
-  Lock,
-  Database,
-  Calculator,
-  TrendingUp,
-  DollarSign,
-  UserCheck,
-  CalendarCheck,
-  Tag,
-  Megaphone,
-} from 'lucide-react';
-import { AdAccountInsight, GHLMetrics, FBConfig } from '../types';
-import { motion } from 'motion/react';
-import { fetchAdAccountData } from '../services/facebookAds';
-import { fetchGHLData, extractNicheFromCampaign } from '../services/ghl';
+import React, { useState, useRef } from 'react';
+import { Upload, FileText, Wand2, Check, ChevronRight, ChevronLeft, Copy, RotateCcw, Save } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 
-interface MeetingPrepProps {
-  fbData: AdAccountInsight[];
+function parseCSV(text: string): { headers: string[]; rows: Record<string, string>[] } {
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length === 0) return { headers: [], rows: [] };
+
+  const parseRow = (line: string): string[] => {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+        else inQuotes = !inQuotes;
+      } else if (ch === ',' && !inQuotes) {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+    result.push(current.trim());
+    return result;
+  };
+
+  const headers = parseRow(lines[0]);
+  const rows = lines.slice(1).filter(l => l.trim()).map(line => {
+    const values = parseRow(line);
+    return headers.reduce((obj, h, i) => ({ ...obj, [h]: values[i] ?? '' }), {} as Record<string, string>);
+  });
+
+  return { headers, rows };
 }
 
-export function MeetingPrep({ fbData }: MeetingPrepProps) {
-  const [ghlToken, setGhlToken]       = useState<string>(() => localStorage.getItem('adguard_ghl_token') || '');
-  const [locationId, setLocationId]   = useState<string>(() => localStorage.getItem('adguard_ghl_location') || '');
-  const [dateRange, setDateRange]     = useState<number>(7);
-  const [selectedCampaignId, setSelectedCampaignId] = useState<string>('');
-  const [campaignName, setCampaignName] = useState<string>('');
-  const [nicheTag, setNicheTag]       = useState<string>('');
-  const [loading, setLoading]         = useState(false);
-  const [metrics, setMetrics]         = useState<GHLMetrics | null>(null);
-  const [error, setError]             = useState<string | null>(null);
+const TEMPLATE_KEY = 'adguard_meeting_template';
 
-  // Flatten all campaigns from all ad accounts
-  const allCampaigns = useMemo(() =>
-    fbData.flatMap(acc =>
-      acc.campaigns.map(camp => ({ ...camp, accountId: acc.account_id }))
-    ), [fbData]);
+export function MeetingPrep() {
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [csvData, setCsvData] = useState<{ headers: string[]; rows: Record<string, string>[] } | null>(null);
+  const [fileName, setFileName] = useState('');
+  const [template, setTemplate] = useState(() => localStorage.getItem(TEMPLATE_KEY) || '');
+  const [savedBadge, setSavedBadge] = useState(false);
+  const [output, setOutput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  const handleCampaignSelect = (id: string) => {
-    setSelectedCampaignId(id);
-    const camp = allCampaigns.find(c => c.campaign_id === id);
-    if (camp) {
-      setCampaignName(camp.campaign_name);
-      setNicheTag(extractNicheFromCampaign(camp.campaign_name));
-    } else {
-      setCampaignName('');
-      setNicheTag('');
-    }
-  };
-
-  const handleGhlToken = (v: string) => {
-    setGhlToken(v);
-    localStorage.setItem('adguard_ghl_token', v);
-  };
-  const handleLocationId = (v: string) => {
-    setLocationId(v);
-    localStorage.setItem('adguard_ghl_location', v);
-  };
-
-  const calculateMetrics = async () => {
-    if (!ghlToken || !locationId || !selectedCampaignId) {
-      setError('Please select a campaign and fill in your GHL details.');
+  const handleFile = (file: File) => {
+    if (!file.name.endsWith('.csv')) {
+      setError('Please upload a .csv file.');
       return;
     }
+    setError('');
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      const parsed = parseCSV(text);
+      if (parsed.headers.length === 0) {
+        setError('Could not parse CSV. Make sure the file has a header row.');
+        return;
+      }
+      setCsvData(parsed);
+      setFileName(file.name);
+    };
+    reader.readAsText(file);
+  };
 
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  };
+
+  const saveTemplate = () => {
+    localStorage.setItem(TEMPLATE_KEY, template);
+    setSavedBadge(true);
+    setTimeout(() => setSavedBadge(false), 2000);
+  };
+
+  const generate = async () => {
+    if (!csvData || !template.trim()) return;
     setLoading(true);
-    setError(null);
-    setMetrics(null);
-
+    setError('');
+    setOutput('');
     try {
-      const savedConfig = localStorage.getItem('adguard_config');
-      if (!savedConfig) throw new Error('Facebook configuration not found.');
-
-      const config: FBConfig = JSON.parse(savedConfig);
-      const datePreset = `last_${dateRange}d`;
-
-      // Fetch spend for the specific campaign only
-      const freshFbData = await fetchAdAccountData(
-        { ...config, campaignIds: [selectedCampaignId] },
-        datePreset
-      );
-
-      const totalSpend = freshFbData.reduce(
-        (sum, acc) => sum + acc.campaigns.reduce((s, c) => s + c.spend, 0),
-        0
-      );
-
-      // Find campaign name from fresh data (might differ if campaign was renamed)
-      const freshCampaign = freshFbData.flatMap(a => a.campaigns).find(c => c.campaign_id === selectedCampaignId);
-      const finalCampaignName = freshCampaign?.campaign_name || campaignName;
-
-      const ghlMetrics = await fetchGHLData(
-        { accessToken: ghlToken, locationId },
-        dateRange,
-        totalSpend,
-        finalCampaignName,
-        nicheTag.trim()
-      );
-
-      setMetrics(ghlMetrics);
+      const res = await fetch('/api/generate-meeting-prep', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows: csvData.rows, headers: csvData.headers, template }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Generation failed');
+      setOutput(data.output);
     } catch (err: any) {
-      console.error('Error calculating metrics:', err);
-      setError(err.message || 'Failed to calculate metrics. Check your tokens and permissions.');
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const metricCards = metrics ? [
-    { label: 'Leads', value: metrics.leads, icon: UserCheck, color: 'text-indigo-600', bg: 'bg-indigo-50' },
-    { label: 'Revenue', value: `$${metrics.revenue.toLocaleString()}`, icon: DollarSign, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-    { label: 'Booking Rate', value: `${metrics.bookingRate.toFixed(1)}%`, icon: TrendingUp, color: 'text-orange-600', bg: 'bg-orange-50' },
-    { label: 'ROAS', value: `${metrics.roas.toFixed(2)}x`, icon: Calculator, color: 'text-rose-600', bg: 'bg-rose-50' },
-  ] : [];
+  const copyOutput = () => {
+    navigator.clipboard.writeText(output);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const reset = () => {
+    setOutput('');
+    setCsvData(null);
+    setFileName('');
+    setStep(1);
+  };
+
+  const isCompleted = (s: number) => {
+    if (s === 1) return !!csvData;
+    if (s === 2) return !!template.trim();
+    return false;
+  };
+
+  const stepLabels = ['Upload CSV', 'Template', 'Generate'];
 
   return (
-    <div className="space-y-8">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-
-        {/* Left Panel */}
-        <div className="lg:col-span-1 space-y-6">
-
-          {/* Step 1 — Campaign */}
-          <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-8 h-8 bg-indigo-600 text-white rounded-lg flex items-center justify-center font-bold text-sm">1</div>
-              <h4 className="font-bold text-gray-900 uppercase text-xs tracking-wider">Campaign</h4>
-            </div>
-
-            {allCampaigns.length === 0 ? (
-              <p className="text-xs text-gray-400 font-medium">No campaigns loaded. Go back to the dashboard and load your ad data first.</p>
-            ) : (
-              <select
-                value={selectedCampaignId}
-                onChange={e => handleCampaignSelect(e.target.value)}
-                className="w-full bg-gray-50 border border-gray-100 rounded-2xl p-4 text-sm font-bold text-gray-700 outline-none focus:ring-2 focus:ring-indigo-600 appearance-none cursor-pointer"
-              >
-                <option value="">— Select a Campaign —</option>
-                {allCampaigns.map(c => (
-                  <option key={c.campaign_id} value={c.campaign_id}>
-                    {c.campaign_name}
-                  </option>
-                ))}
-              </select>
-            )}
-
-            {/* Niche tag — auto-detected, MUST be reviewed before calculating */}
-            {selectedCampaignId && (
-              <div className="mt-4">
-                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block px-1">
-                  GHL Contact Tag (Niche)
-                </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={nicheTag}
-                    onChange={e => setNicheTag(e.target.value)}
-                    placeholder="e.g. joint-pain"
-                    className={`w-full border rounded-xl p-3 text-xs outline-none focus:ring-2 focus:ring-indigo-600 transition-all font-medium pr-10 ${
-                      nicheTag.trim().split(/\s+/).length > 2
-                        ? 'bg-amber-50 border-amber-300'
-                        : 'bg-gray-50 border-gray-100'
-                    }`}
-                  />
-                  <Tag className="w-4 h-4 text-gray-300 absolute right-3 top-1/2 -translate-y-1/2" />
-                </div>
-                {nicheTag.trim().split(/\s+/).length > 2 ? (
-                  <p className="text-[9px] text-amber-600 font-bold mt-1 px-1">
-                    ⚠️ Looks too long — edit to match your exact GHL tag (e.g. "joint-pain")
-                  </p>
-                ) : (
-                  <p className="text-[9px] text-gray-400 mt-1 px-1">
-                    Must match the tag on your GHL contacts exactly (hyphens or spaces both work).
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Step 2 — GHL Integration */}
-          <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-8 h-8 bg-indigo-600 text-white rounded-lg flex items-center justify-center font-bold text-sm">2</div>
-              <h4 className="font-bold text-gray-900 uppercase text-xs tracking-wider">GHL Integration</h4>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block px-1">Private Integration Token (PIT)</label>
-                <div className="relative">
-                  <input
-                    type="password"
-                    value={ghlToken}
-                    onChange={e => handleGhlToken(e.target.value)}
-                    placeholder="pit-..."
-                    className="w-full bg-gray-50 border border-gray-100 rounded-xl p-3 text-xs outline-none focus:ring-2 focus:ring-indigo-600 transition-all font-medium pr-10"
-                  />
-                  <Lock className="w-4 h-4 text-gray-300 absolute right-3 top-1/2 -translate-y-1/2" />
-                </div>
-                {ghlToken && ghlToken.startsWith('pit-') && (
-                  <p className="text-[9px] text-emerald-500 mt-1 px-1 font-bold">✅ Private Integration Token detected.</p>
-                )}
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block px-1">Location ID (Sub-Account)</label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={locationId}
-                    onChange={e => handleLocationId(e.target.value)}
-                    placeholder="Location ID"
-                    className="w-full bg-gray-50 border border-gray-100 rounded-xl p-3 text-xs outline-none focus:ring-2 focus:ring-indigo-600 transition-all font-medium pr-10"
-                  />
-                  <Database className="w-4 h-4 text-gray-300 absolute right-3 top-1/2 -translate-y-1/2" />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Step 3 — Date Range */}
-          <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-8 h-8 bg-indigo-600 text-white rounded-lg flex items-center justify-center font-bold text-sm">3</div>
-              <h4 className="font-bold text-gray-900 uppercase text-xs tracking-wider">Date Range</h4>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              {[7, 14, 30, 90].map(days => (
-                <button
-                  key={days}
-                  onClick={() => setDateRange(days)}
-                  className={`py-3 px-4 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-2 ${
-                    dateRange === days
-                      ? 'bg-indigo-600 border-indigo-600 text-white shadow-md'
-                      : 'bg-white border-gray-100 text-gray-400 hover:border-indigo-100'
-                  }`}
-                >
-                  <Calendar className="w-3.5 h-3.5" />
-                  Last {days} Days
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <button
-            onClick={calculateMetrics}
-            disabled={loading || !ghlToken || !locationId || !selectedCampaignId}
-            className="w-full group flex items-center justify-center gap-3 py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-lg active:scale-[0.98] disabled:opacity-50"
-          >
-            {loading ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
-            ) : (
-              <>
-                <Calculator className="w-5 h-5" />
-                Perform Calculations
-                <ArrowRight className="w-5 h-5 transition-transform group-hover:translate-x-1" />
-              </>
-            )}
-          </button>
-        </div>
-
-        {/* Right Panel */}
-        <div className="lg:col-span-2 space-y-6">
-          {error && (
-            <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl text-rose-600 flex items-center gap-3 text-sm font-medium">
-              <AlertCircle className="w-5 h-5 flex-shrink-0" />
-              {error}
-            </div>
-          )}
-
-          {metrics ? (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="space-y-6"
-            >
-              {/* Campaign + Niche header */}
-              <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex flex-wrap gap-4">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="p-2 bg-indigo-50 rounded-lg flex-shrink-0">
-                    <Megaphone className="w-4 h-4 text-indigo-600" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Campaign</p>
-                    <p className="text-sm font-bold text-gray-900 truncate">{metrics.campaignName || '—'}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-violet-50 rounded-lg flex-shrink-0">
-                    <Tag className="w-4 h-4 text-violet-600" />
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Niche Tag</p>
-                    <p className="text-sm font-bold text-violet-700">{metrics.nicheTag || 'All leads'}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 ml-auto">
-                  <div className="flex items-center gap-2 px-3 py-1 bg-gray-50 rounded-lg text-xs font-bold text-gray-500 uppercase tracking-wider">
-                    <CalendarCheck className="w-3.5 h-3.5" />
-                    Last {dateRange} Days
-                  </div>
-                </div>
-              </div>
-
-              {/* Highlight Cards */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {metricCards.map((card, idx) => (
-                  <div key={idx} className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm">
-                    <div className={`p-2 w-fit rounded-lg ${card.bg} mb-3`}>
-                      <card.icon className={`w-5 h-5 ${card.color}`} />
-                    </div>
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{card.label}</p>
-                    <p className="text-xl font-black text-gray-900 mt-1">{card.value}</p>
-                  </div>
-                ))}
-              </div>
-
-              {/* Metrics Table */}
-              <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-                <div className="p-6 border-b border-gray-50">
-                  <h3 className="text-xl font-bold text-gray-900 tracking-tight">Performance Summary</h3>
-                  <p className="text-xs text-gray-400 font-medium">Meta Ads spend × GoHighLevel pipeline data</p>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-gray-50/50">
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">Metric</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">Count</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 text-right">Cost / Rate</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-50">
-                      <tr>
-                        <td className="px-6 py-4"><div className="flex items-center gap-3"><div className="w-1.5 h-1.5 rounded-full bg-indigo-500" /><span className="text-sm font-bold text-gray-700">Leads</span></div></td>
-                        <td className="px-6 py-4 text-sm font-black text-gray-900">{metrics.leads}</td>
-                        <td className="px-6 py-4 text-right"><span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 text-[10px] font-black">${metrics.cpLead.toFixed(2)} / Lead</span></td>
-                      </tr>
-                      <tr>
-                        <td className="px-6 py-4"><div className="flex items-center gap-3"><div className="w-1.5 h-1.5 rounded-full bg-rose-400" /><span className="text-sm font-bold text-gray-700">Duplicates</span></div></td>
-                        <td className="px-6 py-4 text-sm font-black text-gray-900">{metrics.duplicates}</td>
-                        <td className="px-6 py-4 text-right text-xs text-gray-400 font-medium whitespace-nowrap">
-                          {metrics.leads > 0 ? ((metrics.duplicates / metrics.leads) * 100).toFixed(1) : 0}% of leads
-                        </td>
-                      </tr>
-                      <tr>
-                        <td className="px-6 py-4"><div className="flex items-center gap-3"><div className="w-1.5 h-1.5 rounded-full bg-orange-500" /><span className="text-sm font-bold text-gray-700">Bookings</span></div></td>
-                        <td className="px-6 py-4 text-sm font-black text-gray-900">{metrics.bookings}</td>
-                        <td className="px-6 py-4 text-right"><span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-orange-50 text-orange-700 text-[10px] font-black">${metrics.cpBooking.toFixed(2)} / Booking</span></td>
-                      </tr>
-                      <tr>
-                        <td className="px-6 py-4"><div className="flex items-center gap-3"><div className="w-1.5 h-1.5 rounded-full bg-orange-300" /><span className="text-sm font-bold text-gray-700">Booking Rate</span></div></td>
-                        <td className="px-6 py-4 text-sm font-black text-orange-600">{metrics.bookingRate.toFixed(1)}%</td>
-                        <td className="px-6 py-4 text-right text-xs text-gray-400 font-medium whitespace-nowrap">{metrics.bookings} / {metrics.leads} leads</td>
-                      </tr>
-                      <tr>
-                        <td className="px-6 py-4"><div className="flex items-center gap-3"><div className="w-1.5 h-1.5 rounded-full bg-amber-500" /><span className="text-sm font-bold text-gray-700">Shows</span></div></td>
-                        <td className="px-6 py-4 text-sm font-black text-gray-900">{metrics.shows}</td>
-                        <td className="px-6 py-4 text-right"><span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 text-[10px] font-black">${metrics.cpShow.toFixed(2)} / Show</span></td>
-                      </tr>
-                      <tr>
-                        <td className="px-6 py-4"><div className="flex items-center gap-3"><div className="w-1.5 h-1.5 rounded-full bg-amber-300" /><span className="text-sm font-bold text-gray-700">Show Rate</span></div></td>
-                        <td className="px-6 py-4 text-sm font-black text-amber-600">{metrics.showRate.toFixed(1)}%</td>
-                        <td className="px-6 py-4 text-right text-xs text-gray-400 font-medium whitespace-nowrap">{metrics.shows} / {metrics.bookings} bookings</td>
-                      </tr>
-                      <tr>
-                        <td className="px-6 py-4"><div className="flex items-center gap-3"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500" /><span className="text-sm font-bold text-gray-700">Closes</span></div></td>
-                        <td className="px-6 py-4 text-sm font-black text-gray-900">{metrics.closes}</td>
-                        <td className="px-6 py-4 text-right"><span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 text-[10px] font-black">${metrics.cpClose.toFixed(2)} / Close</span></td>
-                      </tr>
-                      <tr className="bg-gray-50/20">
-                        <td className="px-6 py-4"><div className="flex items-center gap-3"><div className="w-1.5 h-1.5 rounded-full bg-gray-900" /><span className="text-sm font-black text-gray-900">Ad Spend</span></div></td>
-                        <td className="px-6 py-4 text-sm font-black text-gray-900">${metrics.totalSpend.toFixed(2)}</td>
-                        <td className="px-6 py-4 text-right text-[10px] font-bold text-gray-400 uppercase">Meta Ads</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="p-6 bg-indigo-600 text-white flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="p-2 bg-white/10 rounded-lg">
-                      <TrendingUp className="w-6 h-6 text-indigo-100" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold text-indigo-200 uppercase tracking-wider">ROAS</p>
-                      <p className="text-3xl font-black">{metrics.roas.toFixed(2)}x</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs font-bold text-indigo-200 uppercase tracking-wider">Pipeline Revenue</p>
-                    <p className="text-3xl font-black">${metrics.revenue.toLocaleString()}</p>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          ) : (
-            <div className="flex flex-col items-center justify-center p-24 border-2 border-dashed border-gray-100 bg-white rounded-[40px] opacity-40">
-              <div className="p-6 bg-gray-50 rounded-full mb-6">
-                <Monitor className="w-16 h-16 text-gray-300" />
-              </div>
-              <h3 className="text-xl font-bold text-gray-400">Select a campaign to start</h3>
-              <p className="text-sm text-gray-300 mt-2 text-center max-w-xs">Choose a campaign, confirm the niche tag, and click Perform Calculations.</p>
-            </div>
-          )}
-        </div>
+    <div className="space-y-8 max-w-4xl">
+      <div>
+        <h2 className="text-2xl font-semibold text-gray-900">Meeting Prep</h2>
+        <p className="text-gray-500">Upload your data, define your template, and generate your prep in seconds.</p>
       </div>
+
+      {/* Step indicator */}
+      <div className="flex items-center gap-2">
+        {[1, 2, 3].map((s, i) => (
+          <React.Fragment key={s}>
+            <button
+              onClick={() => setStep(s as 1 | 2 | 3)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+                step === s
+                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                  : isCompleted(s)
+                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                  : 'bg-white text-gray-400 border border-gray-200'
+              }`}
+            >
+              {isCompleted(s) && step !== s ? (
+                <Check className="w-3.5 h-3.5" />
+              ) : (
+                <span>{s}</span>
+              )}
+              {stepLabels[i]}
+            </button>
+            {s < 3 && <ChevronRight className="w-4 h-4 text-gray-300 flex-shrink-0" />}
+          </React.Fragment>
+        ))}
+      </div>
+
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={step}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.15 }}
+        >
+          {/* ── Step 1: CSV Upload ── */}
+          {step === 1 && (
+            <div className="space-y-6">
+              <div
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleDrop}
+                onClick={() => fileRef.current?.click()}
+                className={`border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all ${
+                  dragOver
+                    ? 'border-indigo-400 bg-indigo-50'
+                    : 'border-gray-200 hover:border-indigo-300 hover:bg-gray-50'
+                }`}
+              >
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept=".csv"
+                  className="hidden"
+                  onChange={(e) => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }}
+                />
+                <div className="flex flex-col items-center gap-4">
+                  <div className={`p-4 rounded-2xl ${csvData ? 'bg-emerald-100' : 'bg-indigo-100'}`}>
+                    {csvData
+                      ? <Check className="w-8 h-8 text-emerald-600" />
+                      : <Upload className="w-8 h-8 text-indigo-600" />
+                    }
+                  </div>
+                  {csvData ? (
+                    <>
+                      <p className="font-semibold text-gray-900">{fileName}</p>
+                      <p className="text-sm text-gray-500">
+                        {csvData.rows.length} rows · {csvData.headers.length} columns · Click to replace
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="font-semibold text-gray-900">Drop your CSV here, or click to browse</p>
+                      <p className="text-sm text-gray-500">Headers must be in the first row</p>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {error && (
+                <p className="text-sm text-rose-600 bg-rose-50 px-4 py-3 rounded-xl border border-rose-100">{error}</p>
+              )}
+
+              {csvData && (
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                  <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-gray-400" />
+                      <span className="text-sm font-semibold text-gray-700">Preview</span>
+                    </div>
+                    <span className="text-xs text-gray-400">First 5 rows</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          {csvData.headers.map(h => (
+                            <th key={h} className="px-4 py-3 text-left font-semibold text-gray-600 whitespace-nowrap text-xs uppercase tracking-wide">
+                              {h}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-50">
+                        {csvData.rows.slice(0, 5).map((row, i) => (
+                          <tr key={i} className="hover:bg-gray-50">
+                            {csvData.headers.map(h => (
+                              <td key={h} className="px-4 py-3 text-gray-700 whitespace-nowrap max-w-[180px] truncate">
+                                {row[h]}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {csvData && (
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => setStep(2)}
+                    className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 transition-all shadow-md shadow-indigo-200"
+                  >
+                    Next: Set Template
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Step 2: Template ── */}
+          {step === 2 && (
+            <div className="space-y-6">
+              {csvData && (
+                <div className="bg-indigo-50 rounded-xl px-5 py-4 border border-indigo-100">
+                  <p className="text-xs font-semibold text-indigo-600 uppercase tracking-wider mb-2">
+                    Columns available in your CSV
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {csvData.headers.map(h => (
+                      <span key={h} className="text-xs font-mono bg-white border border-indigo-200 text-indigo-700 px-2.5 py-1 rounded-lg">
+                        {h}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-gray-400" />
+                    <span className="text-sm font-semibold text-gray-700">Meeting Prep Template</span>
+                  </div>
+                  <button
+                    onClick={saveTemplate}
+                    className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg transition-all ${
+                      savedBadge
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    {savedBadge ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
+                    {savedBadge ? 'Saved!' : 'Save Template'}
+                  </button>
+                </div>
+                <textarea
+                  value={template}
+                  onChange={(e) => setTemplate(e.target.value)}
+                  placeholder={`Paste your meeting prep template here. Describe the format and structure you want — the AI will fill it in using your CSV data.\n\nExample:\n─────────────────────────────\nClient: [client name]\nPeriod: [date range]\n\nPerformance Summary\n• Leads generated: [number]\n• Ad Spend: $[amount]\n• Cost Per Lead: $[cpl]\n• Bookings: [number]\n• ROAS: [value]x\n\nKey Wins This Period:\n[AI fills this in]\n\nAreas to Improve:\n[AI fills this in]\n─────────────────────────────`}
+                  className="w-full h-80 p-6 text-sm font-mono text-gray-700 placeholder-gray-400 resize-none outline-none"
+                />
+              </div>
+
+              <div className="flex justify-between">
+                <button
+                  onClick={() => setStep(1)}
+                  className="flex items-center gap-2 px-4 py-2.5 border border-gray-200 text-gray-600 rounded-xl hover:bg-gray-50 transition-all text-sm"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  Back
+                </button>
+                <button
+                  onClick={() => setStep(3)}
+                  disabled={!template.trim()}
+                  className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 transition-all shadow-md shadow-indigo-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Next: Generate
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Step 3: Generate ── */}
+          {step === 3 && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">CSV Data</p>
+                  <p className="font-semibold text-gray-900 truncate">{fileName}</p>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                    {csvData?.rows.length} rows · {csvData?.headers.length} columns
+                  </p>
+                </div>
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Template</p>
+                  <p className="text-sm text-gray-700 line-clamp-3 font-mono leading-relaxed">
+                    {template.substring(0, 120)}{template.length > 120 ? '…' : ''}
+                  </p>
+                </div>
+              </div>
+
+              {!output && (
+                <div className="flex flex-col items-center gap-4 py-6">
+                  <button
+                    onClick={generate}
+                    disabled={loading}
+                    className="inline-flex items-center gap-3 px-8 py-4 bg-indigo-600 text-white rounded-2xl font-semibold text-lg hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-200 disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {loading ? (
+                      <>
+                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Wand2 className="w-5 h-5" />
+                        Generate Meeting Prep
+                      </>
+                    )}
+                  </button>
+                  {loading && (
+                    <p className="text-sm text-gray-400">This usually takes a few seconds…</p>
+                  )}
+                </div>
+              )}
+
+              {error && (
+                <p className="text-sm text-rose-600 bg-rose-50 px-4 py-3 rounded-xl border border-rose-100">{error}</p>
+              )}
+
+              {output && (
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                  <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Check className="w-4 h-4 text-emerald-500" />
+                      <span className="text-sm font-semibold text-gray-700">Generated Meeting Prep</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={generate}
+                        disabled={loading}
+                        className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 transition-all disabled:opacity-50"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        Regenerate
+                      </button>
+                      <button
+                        onClick={copyOutput}
+                        className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg transition-all ${
+                          copied
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                        }`}
+                      >
+                        {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        {copied ? 'Copied!' : 'Copy'}
+                      </button>
+                    </div>
+                  </div>
+                  <pre className="p-6 text-sm text-gray-700 whitespace-pre-wrap font-sans leading-7">{output}</pre>
+                </div>
+              )}
+
+              <div className="flex justify-between">
+                <button
+                  onClick={() => setStep(2)}
+                  className="flex items-center gap-2 px-4 py-2.5 border border-gray-200 text-gray-600 rounded-xl hover:bg-gray-50 transition-all text-sm"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  Back
+                </button>
+                <button
+                  onClick={reset}
+                  className="flex items-center gap-2 px-4 py-2.5 border border-gray-200 text-gray-600 rounded-xl hover:bg-gray-50 transition-all text-sm"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Start Over
+                </button>
+              </div>
+            </div>
+          )}
+        </motion.div>
+      </AnimatePresence>
     </div>
   );
 }
