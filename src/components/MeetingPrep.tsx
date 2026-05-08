@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Upload, FileText, Wand2, Check, ChevronRight, ChevronLeft, Copy, RotateCcw, Save } from 'lucide-react';
+import { Upload, FileText, Wand2, Check, ChevronRight, ChevronLeft, Copy, RotateCcw, Save, ChevronDown, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 function parseCSV(text: string): { headers: string[]; rows: Record<string, string>[] } {
@@ -35,14 +35,32 @@ function parseCSV(text: string): { headers: string[]; rows: Record<string, strin
   return { headers, rows };
 }
 
-const TEMPLATE_KEY = 'adguard_meeting_template';
+const TEMPLATES_KEY = 'adguard_meeting_templates';
 
 export function MeetingPrep() {
   const [step, setStep] = useState<1 | 2 | 3>(1);
+
+  // File data
   const [csvData, setCsvData] = useState<{ headers: string[]; rows: Record<string, string>[] } | null>(null);
   const [fileName, setFileName] = useState('');
-  const [template, setTemplate] = useState(() => localStorage.getItem(TEMPLATE_KEY) || '');
+  const [fileType, setFileType] = useState<'csv' | 'pdf' | null>(null);
+  const [pdfBase64, setPdfBase64] = useState('');
+
+  // Client info
+  const [clientName, setClientName] = useState('');
+  const [niche, setNiche] = useState('');
+
+  // Templates
+  const [savedTemplates, setSavedTemplates] = useState<Record<string, string>>(() => {
+    try { return JSON.parse(localStorage.getItem(TEMPLATES_KEY) || '{}'); }
+    catch { return {}; }
+  });
+  const [template, setTemplate] = useState('');
+  const [templateName, setTemplateName] = useState('');
   const [savedBadge, setSavedBadge] = useState(false);
+  const [templateDropdownOpen, setTemplateDropdownOpen] = useState(false);
+
+  // Output
   const [output, setOutput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -51,23 +69,36 @@ export function MeetingPrep() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleFile = (file: File) => {
-    if (!file.name.endsWith('.csv')) {
-      setError('Please upload a .csv file.');
-      return;
-    }
     setError('');
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const text = e.target?.result as string;
-      const parsed = parseCSV(text);
-      if (parsed.headers.length === 0) {
-        setError('Could not parse CSV. Make sure the file has a header row.');
-        return;
-      }
-      setCsvData(parsed);
-      setFileName(file.name);
-    };
-    reader.readAsText(file);
+    if (file.name.toLowerCase().endsWith('.csv')) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = e.target?.result as string;
+        const parsed = parseCSV(text);
+        if (parsed.headers.length === 0) {
+          setError('Could not parse CSV. Make sure the file has a header row.');
+          return;
+        }
+        setCsvData(parsed);
+        setPdfBase64('');
+        setFileType('csv');
+        setFileName(file.name);
+      };
+      reader.readAsText(file);
+    } else if (file.name.toLowerCase().endsWith('.pdf')) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result as string;
+        const base64 = dataUrl.split(',')[1];
+        setPdfBase64(base64);
+        setCsvData(null);
+        setFileType('pdf');
+        setFileName(file.name);
+      };
+      reader.readAsDataURL(file);
+    } else {
+      setError('Please upload a .csv or .pdf file.');
+    }
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -78,21 +109,47 @@ export function MeetingPrep() {
   };
 
   const saveTemplate = () => {
-    localStorage.setItem(TEMPLATE_KEY, template);
+    if (!templateName.trim()) {
+      setError('Enter a template name before saving.');
+      return;
+    }
+    setError('');
+    const updated = { ...savedTemplates, [templateName.trim()]: template };
+    localStorage.setItem(TEMPLATES_KEY, JSON.stringify(updated));
+    setSavedTemplates(updated);
     setSavedBadge(true);
     setTimeout(() => setSavedBadge(false), 2000);
   };
 
+  const loadTemplate = (name: string) => {
+    setTemplate(savedTemplates[name]);
+    setTemplateName(name);
+    setTemplateDropdownOpen(false);
+  };
+
+  const deleteTemplate = (name: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updated = { ...savedTemplates };
+    delete updated[name];
+    localStorage.setItem(TEMPLATES_KEY, JSON.stringify(updated));
+    setSavedTemplates(updated);
+    if (templateName === name) setTemplateName('');
+  };
+
   const generate = async () => {
-    if (!csvData || !template.trim()) return;
+    if ((!csvData && !pdfBase64) || !template.trim()) return;
     setLoading(true);
     setError('');
     setOutput('');
     try {
+      const body = fileType === 'pdf'
+        ? { pdfBase64, template, clientName, niche }
+        : { rows: csvData!.rows, headers: csvData!.headers, template, clientName, niche };
+
       const res = await fetch('/api/generate-meeting-prep', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows: csvData.rows, headers: csvData.headers, template }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Generation failed');
@@ -114,16 +171,21 @@ export function MeetingPrep() {
     setOutput('');
     setCsvData(null);
     setFileName('');
+    setFileType(null);
+    setPdfBase64('');
+    setClientName('');
+    setNiche('');
     setStep(1);
   };
 
   const isCompleted = (s: number) => {
-    if (s === 1) return !!csvData;
+    if (s === 1) return !!fileType;
     if (s === 2) return !!template.trim();
     return false;
   };
 
-  const stepLabels = ['Upload CSV', 'Template', 'Generate'];
+  const stepLabels = ['Upload File', 'Template', 'Generate'];
+  const templateNames = Object.keys(savedTemplates);
 
   return (
     <div className="space-y-8 max-w-4xl">
@@ -166,7 +228,7 @@ export function MeetingPrep() {
           exit={{ opacity: 0, y: -8 }}
           transition={{ duration: 0.15 }}
         >
-          {/* ── Step 1: CSV Upload ── */}
+          {/* ── Step 1: Upload File ── */}
           {step === 1 && (
             <div className="space-y-6">
               <div
@@ -183,28 +245,31 @@ export function MeetingPrep() {
                 <input
                   ref={fileRef}
                   type="file"
-                  accept=".csv"
+                  accept=".csv,.pdf"
                   className="hidden"
                   onChange={(e) => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }}
                 />
                 <div className="flex flex-col items-center gap-4">
-                  <div className={`p-4 rounded-2xl ${csvData ? 'bg-emerald-100' : 'bg-indigo-100'}`}>
-                    {csvData
+                  <div className={`p-4 rounded-2xl ${fileType ? 'bg-emerald-100' : 'bg-indigo-100'}`}>
+                    {fileType
                       ? <Check className="w-8 h-8 text-emerald-600" />
                       : <Upload className="w-8 h-8 text-indigo-600" />
                     }
                   </div>
-                  {csvData ? (
+                  {fileType ? (
                     <>
                       <p className="font-semibold text-gray-900">{fileName}</p>
                       <p className="text-sm text-gray-500">
-                        {csvData.rows.length} rows · {csvData.headers.length} columns · Click to replace
+                        {fileType === 'csv'
+                          ? `${csvData?.rows.length} rows · ${csvData?.headers.length} columns · Click to replace`
+                          : 'PDF uploaded · Click to replace'
+                        }
                       </p>
                     </>
                   ) : (
                     <>
-                      <p className="font-semibold text-gray-900">Drop your CSV here, or click to browse</p>
-                      <p className="text-sm text-gray-500">Headers must be in the first row</p>
+                      <p className="font-semibold text-gray-900">Drop your file here, or click to browse</p>
+                      <p className="text-sm text-gray-500">Supports CSV and PDF</p>
                     </>
                   )}
                 </div>
@@ -214,6 +279,36 @@ export function MeetingPrep() {
                 <p className="text-sm text-rose-600 bg-rose-50 px-4 py-3 rounded-xl border border-rose-100">{error}</p>
               )}
 
+              {/* Client Name & Niche fields — shown after upload */}
+              {fileType && (
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-4">
+                  <p className="text-sm font-semibold text-gray-700">Client Details <span className="text-gray-400 font-normal">(optional — helps the AI personalize the output)</span></p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Client Name</label>
+                      <input
+                        type="text"
+                        value={clientName}
+                        onChange={(e) => setClientName(e.target.value)}
+                        placeholder="e.g. John Smith"
+                        className="w-full px-4 py-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 transition-all"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Niche / Industry</label>
+                      <input
+                        type="text"
+                        value={niche}
+                        onChange={(e) => setNiche(e.target.value)}
+                        placeholder="e.g. Knee Pain, Dentistry"
+                        className="w-full px-4 py-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 transition-all"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* CSV Preview */}
               {csvData && (
                 <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                   <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
@@ -250,7 +345,7 @@ export function MeetingPrep() {
                 </div>
               )}
 
-              {csvData && (
+              {fileType && (
                 <div className="flex justify-end">
                   <button
                     onClick={() => setStep(2)}
@@ -282,31 +377,73 @@ export function MeetingPrep() {
                 </div>
               )}
 
+              {/* Load saved template */}
+              {templateNames.length > 0 && (
+                <div className="relative">
+                  <button
+                    onClick={() => setTemplateDropdownOpen(o => !o)}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm text-gray-700 hover:bg-gray-50 transition-all w-full justify-between"
+                  >
+                    <span className="font-medium text-gray-600">
+                      {templateName ? `Template: ${templateName}` : 'Load a saved template…'}
+                    </span>
+                    <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${templateDropdownOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  {templateDropdownOpen && (
+                    <div className="absolute z-10 top-full mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+                      {templateNames.map(name => (
+                        <div
+                          key={name}
+                          onClick={() => loadTemplate(name)}
+                          className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer text-sm"
+                        >
+                          <span className={`font-medium ${templateName === name ? 'text-indigo-600' : 'text-gray-700'}`}>{name}</span>
+                          <button
+                            onClick={(e) => deleteTemplate(name, e)}
+                            className="text-gray-300 hover:text-rose-500 transition-colors p-1 rounded"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-gray-400" />
-                    <span className="text-sm font-semibold text-gray-700">Meeting Prep Template</span>
-                  </div>
+                <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
+                  <FileText className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                  <input
+                    type="text"
+                    value={templateName}
+                    onChange={(e) => setTemplateName(e.target.value)}
+                    placeholder="Template name (required to save)"
+                    className="flex-1 text-sm text-gray-700 placeholder-gray-400 outline-none bg-transparent"
+                  />
                   <button
                     onClick={saveTemplate}
-                    className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg transition-all ${
+                    className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg transition-all flex-shrink-0 ${
                       savedBadge
                         ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                         : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                     }`}
                   >
                     {savedBadge ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
-                    {savedBadge ? 'Saved!' : 'Save Template'}
+                    {savedBadge ? 'Saved!' : 'Save'}
                   </button>
                 </div>
                 <textarea
                   value={template}
                   onChange={(e) => setTemplate(e.target.value)}
-                  placeholder={`Paste your meeting prep template here. Describe the format and structure you want — the AI will fill it in using your CSV data.\n\nExample:\n─────────────────────────────\nClient: [client name]\nPeriod: [date range]\n\nPerformance Summary\n• Leads generated: [number]\n• Ad Spend: $[amount]\n• Cost Per Lead: $[cpl]\n• Bookings: [number]\n• ROAS: [value]x\n\nKey Wins This Period:\n[AI fills this in]\n\nAreas to Improve:\n[AI fills this in]\n─────────────────────────────`}
+                  placeholder={`Define the structure and sections you want in your meeting prep output. The AI will use this as a guide — not copy it literally — and fill it with real insights from your data.\n\nExample:\n─────────────────────────────\nClient: [client name]\nPeriod: [date range]\n\nPerformance Summary\n• Leads generated: [number]\n• Ad Spend: $[amount]\n• Cost Per Lead: $[cpl]\n• Bookings: [number]\n• ROAS: [value]x\n\nKey Wins This Period:\n[AI fills this in]\n\nAreas to Improve:\n[AI fills this in]\n─────────────────────────────`}
                   className="w-full h-80 p-6 text-sm font-mono text-gray-700 placeholder-gray-400 resize-none outline-none"
                 />
               </div>
+
+              {error && (
+                <p className="text-sm text-rose-600 bg-rose-50 px-4 py-3 rounded-xl border border-rose-100">{error}</p>
+              )}
 
               <div className="flex justify-between">
                 <button
@@ -333,14 +470,26 @@ export function MeetingPrep() {
             <div className="space-y-6">
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">CSV Data</p>
-                  <p className="font-semibold text-gray-900 truncate">{fileName}</p>
-                  <p className="text-sm text-gray-500 mt-0.5">
-                    {csvData?.rows.length} rows · {csvData?.headers.length} columns
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">
+                    {fileType === 'pdf' ? 'PDF File' : 'CSV Data'}
                   </p>
+                  <p className="font-semibold text-gray-900 truncate">{fileName}</p>
+                  {fileType === 'csv' && (
+                    <p className="text-sm text-gray-500 mt-0.5">
+                      {csvData?.rows.length} rows · {csvData?.headers.length} columns
+                    </p>
+                  )}
+                  {(clientName || niche) && (
+                    <p className="text-xs text-gray-400 mt-1.5">
+                      {[clientName, niche].filter(Boolean).join(' · ')}
+                    </p>
+                  )}
                 </div>
                 <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
                   <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Template</p>
+                  {templateName && (
+                    <p className="text-xs font-semibold text-indigo-600 mb-1">{templateName}</p>
+                  )}
                   <p className="text-sm text-gray-700 line-clamp-3 font-mono leading-relaxed">
                     {template.substring(0, 120)}{template.length > 120 ? '…' : ''}
                   </p>

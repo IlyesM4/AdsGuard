@@ -30,50 +30,75 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  // Meeting Prep generation
-  app.post("/api/generate-meeting-prep", express.json(), async (req, res) => {
+  // Meeting Prep generation (CSV or PDF)
+  app.post("/api/generate-meeting-prep", express.json({ limit: "20mb" }), async (req, res) => {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return res.status(400).json({ error: "GEMINI_API_KEY is not set in environment variables." });
     }
 
-    const { rows, headers, template } = req.body;
-    if (!rows || !template) {
-      return res.status(400).json({ error: "Missing rows or template in request body." });
+    const { rows, headers, template, clientName, niche, pdfBase64 } = req.body;
+    if (!template) {
+      return res.status(400).json({ error: "Missing template in request body." });
+    }
+    if (!rows && !pdfBase64) {
+      return res.status(400).json({ error: "Missing data: provide either CSV rows or pdfBase64." });
     }
 
     try {
       const ai = new GoogleGenAI({ apiKey });
 
-      const csvTable = [
-        headers.join(", "),
-        ...rows.map((r: Record<string, string>) => headers.map((h: string) => r[h] ?? "").join(", ")),
-      ].join("\n");
+      const clientContext = [
+        clientName ? `Client Name: ${clientName}` : "",
+        niche ? `Niche / Industry: ${niche}` : "",
+      ].filter(Boolean).join("\n");
 
-      const prompt = `You are a professional meeting preparation assistant for a digital marketing agency.
+      const systemPrompt = `You are a professional meeting preparation assistant for a digital marketing agency.
 
-Using the CSV data below, fill in the provided template to create a polished, ready-to-use meeting prep document.
+Your job is to analyze the provided advertising data and generate a polished, insightful meeting prep document.
 
-CSV Data:
-${csvTable}
-
-Template to fill in:
+${clientContext ? `CONTEXT:\n${clientContext}\n` : ""}OUTPUT TEMPLATE (structure guide):
 ${template}
 
-Rules:
-- Follow the template structure exactly — do not add or remove sections
-- Replace all placeholders with real values from the CSV data
-- Calculate any derived metrics (rates, averages, totals) if needed
-- Format numbers clearly: currencies as $X,XXX, percentages as X%, plain counts as whole numbers
-- If a field has no matching CSV data, write "N/A"
-- Write only the completed document — no preamble, no explanation
+INSTRUCTIONS:
+- Use the template above as a STRUCTURAL GUIDE ONLY — it defines the sections and format of your output.
+- Do NOT copy the template text literally. Instead, analyze the data and write real, data-driven content.
+- Extract actual numbers, metrics, and trends from the data to populate every section.
+- Calculate derived metrics where needed (CPL, ROAS, booking rate, show rate, etc.).
+- If the template mentions a client name or niche and they are provided in CONTEXT above, use those values.
+- Format numbers: currencies as $X,XXX · percentages as X% · whole numbers for counts.
+- If data for a section is unavailable, note it briefly rather than leaving a blank.
+- Write ONLY the completed meeting prep document — no meta-commentary, no preamble.`;
 
-Completed meeting prep:`;
+      let response;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash-lite",
-        contents: prompt,
-      });
+      if (pdfBase64) {
+        // PDF path: pass the document as inline data to Gemini
+        response = await ai.models.generateContent({
+          model: "gemini-2.5-flash-lite",
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { text: systemPrompt + "\n\nDATA (see attached PDF):" },
+                { inlineData: { mimeType: "application/pdf", data: pdfBase64 } },
+                { text: "Generate the meeting prep document now:" },
+              ],
+            },
+          ],
+        });
+      } else {
+        // CSV path: embed the table as text
+        const csvTable = [
+          headers.join(", "),
+          ...rows.map((r: Record<string, string>) => headers.map((h: string) => r[h] ?? "").join(", ")),
+        ].join("\n");
+
+        response = await ai.models.generateContent({
+          model: "gemini-2.5-flash-lite",
+          contents: systemPrompt + `\n\nDATA (CSV):\n${csvTable}\n\nGenerate the meeting prep document now:`,
+        });
+      }
 
       res.json({ output: response.text });
     } catch (err: any) {
