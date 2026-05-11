@@ -78,3 +78,22 @@ export interface MeetingPrepData {
   ghlMetrics: GHLMetrics;
   dateRange: number;
 }
+
+export interface Client {
+  id: string;
+  name: string;
+  niche: string | null;
+  created_at: string;
+  meeting_preps?: { count: number }[];
+}
+
+export interface MeetingPrepRecord {
+  id: string;
+  client_id: string;
+  file_name: string | null;
+  template_name: string | null;
+  template: string | null;
+  output: string;
+  post_meeting_notes: string | null;
+  created_at: string;
+}

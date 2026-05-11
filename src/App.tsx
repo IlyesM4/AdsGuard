@@ -4,16 +4,18 @@ import { fetchAdAccountData } from './services/facebookAds';
 import { ConfigForm } from './components/ConfigForm';
 import { HighCPLAlert } from './components/HighCPLAlert';
 import { MeetingPrep } from './components/MeetingPrep';
-import { 
-  LayoutDashboard, 
-  Bell, 
-  Settings, 
-  LogOut, 
-  RefreshCw, 
+import { ClientHistory } from './components/ClientHistory';
+import {
+  LayoutDashboard,
+  Bell,
+  Settings,
+  LogOut,
+  RefreshCw,
   ShieldAlert,
   BarChart3,
   Activity,
-  Presentation
+  Presentation,
+  Users
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -26,7 +28,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [threshold, setThreshold] = useState<AlertThreshold>(2);
-  const [activeTab, setActiveTab] = useState<'alerts' | 'stats' | 'meeting'>('alerts');
+  const [activeTab, setActiveTab] = useState<'alerts' | 'stats' | 'meeting' | 'clients'>('alerts');
 
   const handleSaveConfig = (newConfig: FBConfig) => {
     setConfig(newConfig);
@@ -115,13 +117,24 @@ export default function App() {
           <button
             onClick={() => setActiveTab('meeting')}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
-              activeTab === 'meeting' 
-                ? 'bg-indigo-50 text-indigo-600 font-semibold' 
+              activeTab === 'meeting'
+                ? 'bg-indigo-50 text-indigo-600 font-semibold'
                 : 'text-gray-500 hover:bg-gray-50'
             }`}
           >
             <Presentation className="w-5 h-5" />
             Meeting Prep
+          </button>
+          <button
+            onClick={() => setActiveTab('clients')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
+              activeTab === 'clients'
+                ? 'bg-indigo-50 text-indigo-600 font-semibold'
+                : 'text-gray-500 hover:bg-gray-50'
+            }`}
+          >
+            <Users className="w-5 h-5" />
+            Client History
           </button>
         </nav>
 
@@ -206,6 +219,8 @@ export default function App() {
                 <HighCPLAlert data={data} threshold={threshold} />
               ) : activeTab === 'meeting' ? (
                 <MeetingPrep />
+              ) : activeTab === 'clients' ? (
+                <ClientHistory />
               ) : (
                 <div className="space-y-8">
                   <div className="flex items-center justify-between">

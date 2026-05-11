@@ -6,6 +6,24 @@ import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
 
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+function sbFetch(path: string, options: RequestInit = {}): Promise<Response> {
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    throw new Error("Database not configured. Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to your .env file.");
+  }
+  return fetch(`${SUPABASE_URL}/rest/v1${path}`, {
+    ...options,
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      "Content-Type": "application/json",
+      ...((options.headers as Record<string, string>) || {}),
+    },
+  });
+}
+
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
@@ -19,11 +37,12 @@ async function startServer() {
   const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 
   let APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
-  
+
   // Remove trailing slash if present
   if (APP_URL.endsWith('/')) {
     APP_URL = APP_URL.slice(0, -1);
   }
+
 
   // API routes
   app.get("/api/health", (req, res) => {
@@ -37,7 +56,7 @@ async function startServer() {
       return res.status(400).json({ error: "GEMINI_API_KEY is not set in environment variables." });
     }
 
-    const { rows, headers, template, clientName, niche, pdfBase64 } = req.body;
+    const { rows, headers, template, clientName, niche, pdfBase64, clientId } = req.body;
     if (!template) {
       return res.status(400).json({ error: "Missing template in request body." });
     }
@@ -48,16 +67,36 @@ async function startServer() {
     try {
       const ai = new GoogleGenAI({ apiKey });
 
+      // Fetch client history for AI context
+      let clientHistory: Array<{ output: string; post_meeting_notes: string | null; created_at: string }> = [];
+      if (clientId && SUPABASE_URL && SUPABASE_KEY) {
+        try {
+          const histRes = await sbFetch(`/meeting_preps?select=output,post_meeting_notes,created_at&client_id=eq.${clientId}&order=created_at.desc&limit=3`);
+          if (histRes.ok) clientHistory = await histRes.json();
+        } catch { /* no history available */ }
+      }
+
       const clientContext = [
         clientName ? `Client Name: ${clientName}` : "",
         niche ? `Niche / Industry: ${niche}` : "",
       ].filter(Boolean).join("\n");
 
+      const sep = "─".repeat(60);
+      const historySection = clientHistory.length > 0
+        ? `\nCLIENT HISTORY (previous meeting preps — use these to identify changes, patterns & growth opportunities):\n${sep}\n${
+            clientHistory.map((p, i) => {
+              const date = new Date(p.created_at).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+              const label = i === 0 ? "Most Recent Report" : `Report ${i + 1}`;
+              return `[${label} — ${date}]\n${p.output}${p.post_meeting_notes ? `\n\n[Post-meeting notes from that session]: ${p.post_meeting_notes}` : ""}`;
+            }).join(`\n${sep}\n`)
+          }\n${sep}\n`
+        : "";
+
       const systemPrompt = `You are a professional meeting preparation assistant for a digital marketing agency.
 
 Your job is to analyze the provided advertising data and generate a polished, insightful meeting prep document.
 
-${clientContext ? `CONTEXT:\n${clientContext}\n` : ""}OUTPUT TEMPLATE (structure guide):
+${clientContext ? `CONTEXT:\n${clientContext}\n` : ""}${historySection}OUTPUT TEMPLATE (structure guide):
 ${template}
 
 INSTRUCTIONS:
@@ -68,7 +107,12 @@ INSTRUCTIONS:
 - If the template mentions a client name or niche and they are provided in CONTEXT above, use those values.
 - Format numbers: currencies as $X,XXX · percentages as X% · whole numbers for counts.
 - If data for a section is unavailable, note it briefly rather than leaving a blank.
-- Write ONLY the completed meeting prep document — no meta-commentary, no preamble.`;
+- Write ONLY the completed meeting prep document — no meta-commentary, no preamble.${clientHistory.length > 0 ? `
+- HISTORICAL ANALYSIS: You have access to this client's previous reports above. Use them to:
+  • Note what has CHANGED since the last report (metrics trending up or down)
+  • Identify RECURRING struggles or consistent wins across multiple periods
+  • Surface GROWTH OPPORTUNITIES based on observed patterns
+  • If post-meeting notes exist, factor in what actually happened after that session` : ""}`;
 
       let response;
 
@@ -104,6 +148,86 @@ INSTRUCTIONS:
     } catch (err: any) {
       console.error("Gemini generation error:", err);
       res.status(500).json({ error: err.message || "Generation failed" });
+    }
+  });
+
+  // ── Client Memory API ──────────────────────────────────────────────────
+
+  // GET /api/clients — list all clients with report count
+  app.get("/api/clients", async (req, res) => {
+    try {
+      const sbRes = await sbFetch("/clients?select=*,meeting_preps(count)&order=name.asc");
+      if (!sbRes.ok) return res.status(500).json({ error: await sbRes.text() });
+      res.json({ clients: await sbRes.json() });
+    } catch (err: any) {
+      res.status(503).json({ error: err.message });
+    }
+  });
+
+  // POST /api/clients — create a new client
+  app.post("/api/clients", express.json(), async (req, res) => {
+    const { name, niche } = req.body;
+    if (!name?.trim()) return res.status(400).json({ error: "Client name is required." });
+    try {
+      const sbRes = await sbFetch("/clients", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ name: name.trim(), niche: niche?.trim() || null }),
+      });
+      if (!sbRes.ok) return res.status(500).json({ error: await sbRes.text() });
+      const [client] = await sbRes.json();
+      res.json({ client });
+    } catch (err: any) {
+      res.status(503).json({ error: err.message });
+    }
+  });
+
+  // GET /api/meeting-preps?clientId=X — list reports for a client
+  app.get("/api/meeting-preps", async (req, res) => {
+    const { clientId } = req.query;
+    if (!clientId) return res.status(400).json({ error: "clientId is required." });
+    try {
+      const sbRes = await sbFetch(`/meeting_preps?select=*&client_id=eq.${clientId}&order=created_at.desc`);
+      if (!sbRes.ok) return res.status(500).json({ error: await sbRes.text() });
+      res.json({ preps: await sbRes.json() });
+    } catch (err: any) {
+      res.status(503).json({ error: err.message });
+    }
+  });
+
+  // POST /api/meeting-preps — save a generated report
+  app.post("/api/meeting-preps", express.json(), async (req, res) => {
+    const { clientId, output, fileName, templateName, template } = req.body;
+    if (!clientId || !output) return res.status(400).json({ error: "clientId and output are required." });
+    try {
+      const sbRes = await sbFetch("/meeting_preps", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ client_id: clientId, output, file_name: fileName || null, template_name: templateName || null, template: template || null }),
+      });
+      if (!sbRes.ok) return res.status(500).json({ error: await sbRes.text() });
+      const [prep] = await sbRes.json();
+      res.json({ prep });
+    } catch (err: any) {
+      res.status(503).json({ error: err.message });
+    }
+  });
+
+  // PATCH /api/meeting-preps/:id/notes — add or edit post-meeting notes
+  app.patch("/api/meeting-preps/:id/notes", express.json(), async (req, res) => {
+    const { id } = req.params;
+    const { notes } = req.body;
+    try {
+      const sbRes = await sbFetch(`/meeting_preps?id=eq.${id}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ post_meeting_notes: notes ?? null }),
+      });
+      if (!sbRes.ok) return res.status(500).json({ error: await sbRes.text() });
+      const [prep] = await sbRes.json();
+      res.json({ prep });
+    } catch (err: any) {
+      res.status(503).json({ error: err.message });
     }
   });
 
