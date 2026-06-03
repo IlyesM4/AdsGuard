@@ -15,6 +15,8 @@ export interface AdInsight {
   reach: number;
   impressions: number;
   leads: number;
+  link_clicks: number;
+  cpc: number;
   actions?: { action_type: string; value: string }[];
   cost_per_action_type?: { action_type: string; value: string }[];
   cpl?: number;

@@ -77,7 +77,7 @@ async function fetchCampaignInsights(accountId: string, targetCampaignIds: strin
       const campaignInsightData = await campaignInsightResponse.json();
       const campaignInsight: any = campaignInsightData.data?.[0] || { spend: '0', actions: [], cost_per_action_type: [] };
 
-      const adInsightFields = 'ad_id,ad_name,spend,actions,cost_per_action_type';
+      const adInsightFields = 'ad_id,ad_name,spend,actions,cost_per_action_type,inline_link_clicks,cost_per_inline_link_click';
       const adInsightUrl = `https://graph.facebook.com/${FB_API_VERSION}/${campaign.id}/insights?level=ad&fields=${adInsightFields}&date_preset=${datePreset}&access_token=${accessToken}`;
       const adInsightResponse = await fetch(adInsightUrl);
       const adInsightData = await adInsightResponse.json();
@@ -92,12 +92,14 @@ async function fetchCampaignInsights(accountId: string, targetCampaignIds: strin
           campaign_id: campaign.id,
           campaign_name: campaign.name,
           adset_id: ad.adset_id,
-          adset_name: '', 
+          adset_name: '',
           spend: insight ? parseFloat(insight.spend) : 0,
           reach: 0,
           impressions: 0,
           leads: insight ? getLeadsFromResult(insight.actions) : 0,
-          cpl: insight ? getCPLFromResult(insight.cost_per_action_type) : 0
+          cpl: insight ? getCPLFromResult(insight.cost_per_action_type) : 0,
+          link_clicks: insight ? parseInt(insight.inline_link_clicks || '0') : 0,
+          cpc: insight ? parseFloat(insight.cost_per_inline_link_click || '0') : 0,
         };
       });
 
