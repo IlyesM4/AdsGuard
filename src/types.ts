@@ -27,6 +27,7 @@ export interface CampaignInsight {
   campaign_name: string;
   spend: number;
   cpl: number;
+  cpc: number;
   leads: number;
   ads: AdInsight[];
 }

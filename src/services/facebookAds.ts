@@ -71,7 +71,7 @@ async function fetchCampaignInsights(accountId: string, targetCampaignIds: strin
       );
 
       // 4. Get insights for the campaign and its ads
-      const campaignInsightFields = 'spend,actions,cost_per_action_type';
+      const campaignInsightFields = 'spend,actions,cost_per_action_type,cost_per_inline_link_click';
       const campaignInsightUrl = `https://graph.facebook.com/${FB_API_VERSION}/${campaign.id}/insights?fields=${campaignInsightFields}&date_preset=${datePreset}&access_token=${accessToken}`;
       const campaignInsightResponse = await fetch(campaignInsightUrl);
       const campaignInsightData = await campaignInsightResponse.json();
@@ -108,6 +108,7 @@ async function fetchCampaignInsights(accountId: string, targetCampaignIds: strin
         campaign_name: campaign.name,
         spend: parseFloat(campaignInsight.spend || '0'),
         cpl: getCPLFromResult(campaignInsight.cost_per_action_type),
+        cpc: parseFloat(campaignInsight.cost_per_inline_link_click || '0'),
         leads: getLeadsFromResult(campaignInsight.actions),
         ads: ads
       });
