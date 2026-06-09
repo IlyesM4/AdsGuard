@@ -1,4 +1,4 @@
-import { AdAccountInsight, AdInsight, CampaignInsight, FBConfig } from '../types';
+import { AdAccountInsight, AdFrequencyData, AccountFrequencyData, AdInsight, CampaignInsight, FBConfig } from '../types';
 
 const FB_API_VERSION = 'v25.0';
 
@@ -118,6 +118,101 @@ async function fetchCampaignInsights(accountId: string, targetCampaignIds: strin
   }
 
   return campaignInsights;
+}
+
+export async function fetchFrequencyData(config: FBConfig): Promise<AccountFrequencyData[]> {
+  const results: AccountFrequencyData[] = [];
+
+  for (const accountId of config.adAccountIds) {
+    const formattedAccountId = accountId.startsWith('act_') ? accountId : `act_${accountId}`;
+    try {
+      const ads = await fetchFrequencyForAccount(formattedAccountId, config.campaignIds, config.accessToken);
+      results.push({ account_id: accountId, ads });
+    } catch (error) {
+      console.error(`Error fetching frequency for account ${accountId}:`, error);
+    }
+  }
+
+  return results;
+}
+
+async function fetchFrequencyForAccount(
+  accountId: string,
+  targetCampaignIds: string[],
+  accessToken: string
+): Promise<AdFrequencyData[]> {
+  const campaignListUrl = `https://graph.facebook.com/${FB_API_VERSION}/${accountId}/campaigns?fields=id,name,effective_status&limit=100&access_token=${accessToken}`;
+  const campaignListData = await (await fetch(campaignListUrl)).json();
+
+  if (campaignListData.error) throw new Error(campaignListData.error.message);
+
+  const filteredCampaigns = targetCampaignIds.length > 0
+    ? (campaignListData.data || []).filter((c: any) => targetCampaignIds.includes(c.id))
+    : (campaignListData.data || []);
+
+  const allAds: AdFrequencyData[] = [];
+
+  for (const campaign of filteredCampaigns) {
+    try {
+      const adsetData = await (await fetch(
+        `https://graph.facebook.com/${FB_API_VERSION}/${campaign.id}/adsets?fields=id,effective_status&limit=100&access_token=${accessToken}`
+      )).json();
+      const activeAdsetIds = new Set<string>(
+        (adsetData.data || []).filter((as: any) => as.effective_status === 'ACTIVE').map((as: any) => as.id)
+      );
+
+      const adListData = await (await fetch(
+        `https://graph.facebook.com/${FB_API_VERSION}/${campaign.id}/ads?fields=id,name,adset_id,effective_status&limit=500&access_token=${accessToken}`
+      )).json();
+      const activeAds = (adListData.data || []).filter((ad: any) =>
+        ad.effective_status === 'ACTIVE' && activeAdsetIds.has(ad.adset_id)
+      );
+
+      if (activeAds.length === 0) continue;
+
+      const activeAdIds = new Set<string>(activeAds.map((ad: any) => ad.id));
+
+      const [map7d, map14d, map30d] = await Promise.all([
+        fetchFrequencyForPreset(campaign.id, activeAdIds, accessToken, 'last_7d'),
+        fetchFrequencyForPreset(campaign.id, activeAdIds, accessToken, 'last_14d'),
+        fetchFrequencyForPreset(campaign.id, activeAdIds, accessToken, 'last_30d'),
+      ]);
+
+      for (const ad of activeAds) {
+        allAds.push({
+          ad_id: ad.id,
+          ad_name: ad.name,
+          campaign_id: campaign.id,
+          campaign_name: campaign.name,
+          freq_7d: map7d.get(ad.id) || 0,
+          freq_14d: map14d.get(ad.id) || 0,
+          freq_30d: map30d.get(ad.id) || 0,
+        });
+      }
+    } catch (err) {
+      console.error(`Error fetching frequency for campaign ${campaign.id}:`, err);
+    }
+  }
+
+  return allAds;
+}
+
+async function fetchFrequencyForPreset(
+  campaignId: string,
+  activeAdIds: Set<string>,
+  accessToken: string,
+  datePreset: string
+): Promise<Map<string, number>> {
+  const url = `https://graph.facebook.com/${FB_API_VERSION}/${campaignId}/insights?level=ad&fields=ad_id,frequency&date_preset=${datePreset}&access_token=${accessToken}`;
+  const data = await (await fetch(url)).json();
+
+  const map = new Map<string, number>();
+  for (const ins of (data.data || [])) {
+    if (activeAdIds.has(ins.ad_id)) {
+      map.set(ins.ad_id, parseFloat(ins.frequency || '0'));
+    }
+  }
+  return map;
 }
 
 function getCPLFromResult(costPerActionType?: { action_type: string; value: string }[]): number {

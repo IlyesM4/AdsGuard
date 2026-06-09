@@ -39,6 +39,21 @@ export interface AdAccountInsight {
 
 export type AlertThreshold = 1.15 | 2 | 3 | 0;
 
+export interface AdFrequencyData {
+  ad_id: string;
+  ad_name: string;
+  campaign_id: string;
+  campaign_name: string;
+  freq_7d: number;
+  freq_14d: number;
+  freq_30d: number;
+}
+
+export interface AccountFrequencyData {
+  account_id: string;
+  ads: AdFrequencyData[];
+}
+
 export interface GoogleTokens {
   access_token: string;
   refresh_token?: string;

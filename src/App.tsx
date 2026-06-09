@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { FBConfig, AdAccountInsight, AlertThreshold } from './types';
-import { fetchAdAccountData } from './services/facebookAds';
+import { FBConfig, AdAccountInsight, AccountFrequencyData, AlertThreshold } from './types';
+import { fetchAdAccountData, fetchFrequencyData } from './services/facebookAds';
 import { ConfigForm } from './components/ConfigForm';
 import { HighCPLAlert } from './components/HighCPLAlert';
 import { CPCAlert } from './components/CPCAlert';
+import { FrequencyAlert } from './components/FrequencyAlert';
 import { MeetingPrep } from './components/MeetingPrep';
 import { ClientHistory } from './components/ClientHistory';
 import {
@@ -17,7 +18,8 @@ import {
   Activity,
   Presentation,
   Users,
-  MousePointerClick
+  MousePointerClick,
+  Eye,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -27,10 +29,11 @@ export default function App() {
     return saved ? JSON.parse(saved) : null;
   });
   const [data, setData] = useState<AdAccountInsight[]>([]);
+  const [frequencyData, setFrequencyData] = useState<AccountFrequencyData[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [threshold, setThreshold] = useState<AlertThreshold>(2);
-  const [activeTab, setActiveTab] = useState<'alerts' | 'cpc' | 'stats' | 'meeting' | 'clients'>('alerts');
+  const [activeTab, setActiveTab] = useState<'alerts' | 'cpc' | 'frequency' | 'stats' | 'meeting' | 'clients'>('alerts');
 
   const handleSaveConfig = (newConfig: FBConfig) => {
     setConfig(newConfig);
@@ -52,8 +55,12 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const insights = await fetchAdAccountData(config);
+      const [insights, freqData] = await Promise.all([
+        fetchAdAccountData(config),
+        fetchFrequencyData(config),
+      ]);
       setData(insights);
+      setFrequencyData(freqData);
     } catch (err: any) {
       setError(err.message || 'Failed to fetch data. Check your token and IDs.');
     } finally {
@@ -117,10 +124,21 @@ export default function App() {
             CPC Alerts
           </button>
           <button
+            onClick={() => setActiveTab('frequency')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
+              activeTab === 'frequency'
+                ? 'bg-indigo-50 text-indigo-600 font-semibold'
+                : 'text-gray-500 hover:bg-gray-50'
+            }`}
+          >
+            <Eye className="w-5 h-5" />
+            Frequency
+          </button>
+          <button
             onClick={() => setActiveTab('stats')}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
-              activeTab === 'stats' 
-                ? 'bg-indigo-50 text-indigo-600 font-semibold' 
+              activeTab === 'stats'
+                ? 'bg-indigo-50 text-indigo-600 font-semibold'
                 : 'text-gray-500 hover:bg-gray-50'
             }`}
           >
@@ -232,6 +250,8 @@ export default function App() {
                 <HighCPLAlert data={data} threshold={threshold} />
               ) : activeTab === 'cpc' ? (
                 <CPCAlert data={data} />
+              ) : activeTab === 'frequency' ? (
+                <FrequencyAlert data={frequencyData} />
               ) : activeTab === 'meeting' ? (
                 <MeetingPrep />
               ) : activeTab === 'clients' ? (
