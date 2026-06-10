@@ -115,3 +115,38 @@ export interface MeetingPrepRecord {
   post_meeting_notes: string | null;
   created_at: string;
 }
+
+export interface PCReviewRow {
+  campaignName: string;
+  spend: number;
+  uniqueClicks: number;
+  ctrAll: number | null;
+  uniqueOutboundCtr: number | null;
+  lpConvRate: number | null;
+  leadsIn: number;
+  cpl: number | null;
+  disqualifieds: number;
+  dnds: number;
+  uniqueLeads: number;
+  schedules: number;
+  cpSchedule: number | null;
+  shows: number;
+  cpShow: number | null;
+  closes: number;
+  cpClose: number | null;
+  revenue: number;
+  roas: number | null;
+}
+
+export type PCRuleType = 'rule1' | 'rule2' | 'both';
+
+export interface PCFlaggedRow extends PCReviewRow {
+  ruleType: PCRuleType;
+}
+
+export interface PCReviewThresholds {
+  rule1MinSchedules: number;
+  rule1MinCPSchedule: number;
+  rule2CPScheduleThreshold: number;
+  rule2MinSpendZeroSchedules: number;
+}

@@ -7,6 +7,7 @@ import { CPCAlert } from './components/CPCAlert';
 import { FrequencyAlert } from './components/FrequencyAlert';
 import { MeetingPrep } from './components/MeetingPrep';
 import { ClientHistory } from './components/ClientHistory';
+import { BookingPCReview } from './components/BookingPCReview';
 import {
   LayoutDashboard,
   Bell,
@@ -20,6 +21,7 @@ import {
   Users,
   MousePointerClick,
   Eye,
+  ClipboardCheck,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -33,7 +35,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [threshold, setThreshold] = useState<AlertThreshold>(2);
-  const [activeTab, setActiveTab] = useState<'alerts' | 'cpc' | 'frequency' | 'stats' | 'meeting' | 'clients'>('alerts');
+  const [activeTab, setActiveTab] = useState<'alerts' | 'cpc' | 'frequency' | 'stats' | 'meeting' | 'clients' | 'pcreview'>('alerts');
 
   const handleSaveConfig = (newConfig: FBConfig) => {
     setConfig(newConfig);
@@ -167,6 +169,17 @@ export default function App() {
             <Users className="w-5 h-5" />
             Client History
           </button>
+          <button
+            onClick={() => setActiveTab('pcreview')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
+              activeTab === 'pcreview'
+                ? 'bg-indigo-50 text-indigo-600 font-semibold'
+                : 'text-gray-500 hover:bg-gray-50'
+            }`}
+          >
+            <ClipboardCheck className="w-5 h-5" />
+            PC Review
+          </button>
         </nav>
 
         <div className="p-4 border-t border-gray-100 space-y-2">
@@ -256,6 +269,8 @@ export default function App() {
                 <MeetingPrep />
               ) : activeTab === 'clients' ? (
                 <ClientHistory />
+              ) : activeTab === 'pcreview' ? (
+                <BookingPCReview />
               ) : (
                 <div className="space-y-8">
                   <div className="flex items-center justify-between">

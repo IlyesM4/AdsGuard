@@ -151,6 +151,78 @@ INSTRUCTIONS:
     }
   });
 
+  // PC Audit Request generation
+  app.post("/api/generate-pc-audit", express.json(), async (req, res) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(400).json({ error: "GEMINI_API_KEY is not set in environment variables." });
+    }
+
+    const { row, ruleType, thresholds } = req.body;
+    if (!row || !ruleType) {
+      return res.status(400).json({ error: "Missing row or ruleType." });
+    }
+
+    const t = thresholds || { rule1MinSchedules: 3, rule1MinCPSchedule: 200, rule2CPScheduleThreshold: 390, rule2MinSpendZeroSchedules: 390 };
+
+    const ruleLabels: Record<string, string> = {
+      rule1: `Rule 1 — ≥${t.rule1MinSchedules} schedules at CPSchedule ≥ $${t.rule1MinCPSchedule}`,
+      rule2: `Rule 2 — CPSchedule ≥ $${t.rule2CPScheduleThreshold} OR spend ≥ $${t.rule2MinSpendZeroSchedules} with 0 schedules`,
+      both: `Rule 1 & Rule 2`,
+    };
+
+    const ruleInquiry: Record<string, string> = {
+      rule1: `Inquiry: Are these bookings quality — showing/closing, deal value? No kill on this trigger; decision follows show/ROAS data.\nAction: Document feedback in the Hypothesis Tracker.`,
+      rule2: `Inquiry: Were leads contacted on time? Are they low-intent/unreachable, or is there a follow-up gap?\nAction: Kill if leads were contacted on time and are low-intent/unreachable. Keep + route to nurture if PC reveals a follow-up gap.\nAction: Document the call in the Hypothesis Tracker either way.`,
+      both: `Inquiry (Rule 1): Are these bookings quality — showing/closing, deal value? No kill on this trigger.\nInquiry (Rule 2): Were leads contacted on time? Are they low-intent/unreachable, or is there a follow-up gap?\nAction: Kill if low-intent after contact; keep + route to nurture if follow-up gap found. Document all findings in the Hypothesis Tracker.`,
+    };
+
+    const fv = (v: number | null) => v !== null ? `$${v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}` : '—';
+
+    const metricsLines = [
+      `Spend: ${fv(row.spend)} | Leads: ${row.leadsIn} | CPL: ${fv(row.cpl)}`,
+      `Schedules: ${row.schedules} | CPSchedule: ${fv(row.cpSchedule)}`,
+      `Shows: ${row.shows} | CPShow: ${fv(row.cpShow)}`,
+      `Closes: ${row.closes} | Revenue: ${fv(row.revenue)} | ROAS: ${row.roas !== null ? `${Number(row.roas).toFixed(2)}x` : '—'}`,
+      row.disqualifieds > 0 ? `Disqualifieds: ${row.disqualifieds}` : null,
+      row.dnds > 0 ? `DNDs: ${row.dnds}` : null,
+    ].filter(Boolean).join('\n');
+
+    const prompt = `You are generating a PC (Patient Concierge) audit request for an internal digital marketing agency team.
+
+ACCOUNT: ${row.campaignName}
+PERIOD: Last 7 days
+
+METRICS:
+${metricsLines}
+
+TRIGGERED: ${ruleLabels[ruleType] || ruleType}
+
+${ruleInquiry[ruleType] || ''}
+
+Write a concise, professional PC audit request that:
+1. Opens with a one-line summary identifying the account and the specific flag (include the key triggering metric value)
+2. Lists the relevant metrics as bullet points
+3. States the exact question(s) for the PC team
+4. Specifies the decision framework (what action to take based on their answer)
+5. Closes with a one-line reminder to document findings in the Hypothesis Tracker
+
+Use bullet points throughout. Keep the total under 180 words. Write in a direct, professional internal memo style.
+Output ONLY the audit request — no preamble, no "Here is the request:" opener.`;
+
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash-lite",
+        contents: prompt,
+      });
+      res.json({ output: response.text });
+    } catch (err: any) {
+      console.error("PC Audit generation error:", err);
+      res.status(500).json({ error: err.message || "Generation failed" });
+    }
+  });
+
   // ── Client Memory API ──────────────────────────────────────────────────
 
   // GET /api/clients — list all clients with report count
