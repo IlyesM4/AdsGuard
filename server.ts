@@ -158,7 +158,7 @@ INSTRUCTIONS:
       return res.status(400).json({ error: "GEMINI_API_KEY is not set in environment variables." });
     }
 
-    const { row, ruleType, thresholds } = req.body;
+    const { row, ruleType, thresholds, template } = req.body;
     if (!row || !ruleType) {
       return res.status(400).json({ error: "Missing row or ruleType." });
     }
@@ -188,6 +188,21 @@ INSTRUCTIONS:
       row.dnds > 0 ? `DNDs: ${row.dnds}` : null,
     ].filter(Boolean).join('\n');
 
+    const templateSection = template
+      ? `\nOUTPUT TEMPLATE (use this as your structural guide — follow the format and sections, fill in with real data from this account):\n${"─".repeat(60)}\n${template}\n${"─".repeat(60)}\n`
+      : "";
+
+    const defaultInstructions = `Write a concise, professional PC audit request that:
+1. Opens with a one-line summary identifying the account and the specific flag (include the key triggering metric value)
+2. Lists the relevant metrics as bullet points
+3. States the exact question(s) for the PC team
+4. Specifies the decision framework (what action to take based on their answer)
+5. Closes with a one-line reminder to document findings in the Hypothesis Tracker
+
+Use bullet points throughout. Keep the total under 180 words. Write in a direct, professional internal memo style.`;
+
+    const templateInstructions = `Use the OUTPUT TEMPLATE above as your structural guide — follow its format exactly, fill every section with real data from this account. Do NOT copy template placeholder text; replace it with actual values.`;
+
     const prompt = `You are generating a PC (Patient Concierge) audit request for an internal digital marketing agency team.
 
 ACCOUNT: ${row.campaignName}
@@ -198,16 +213,10 @@ ${metricsLines}
 
 TRIGGERED: ${ruleLabels[ruleType] || ruleType}
 
-${ruleInquiry[ruleType] || ''}
+${ruleInquiry[ruleType] || ""}
+${templateSection}
+${template ? templateInstructions : defaultInstructions}
 
-Write a concise, professional PC audit request that:
-1. Opens with a one-line summary identifying the account and the specific flag (include the key triggering metric value)
-2. Lists the relevant metrics as bullet points
-3. States the exact question(s) for the PC team
-4. Specifies the decision framework (what action to take based on their answer)
-5. Closes with a one-line reminder to document findings in the Hypothesis Tracker
-
-Use bullet points throughout. Keep the total under 180 words. Write in a direct, professional internal memo style.
 Output ONLY the audit request — no preamble, no "Here is the request:" opener.`;
 
     try {

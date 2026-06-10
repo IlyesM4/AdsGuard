@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef } from 'react';
 import {
   Upload, ChevronDown, ChevronUp, Copy, Check,
   RefreshCw, X, AlertTriangle, Zap, Flag, FileText,
+  LayoutTemplate, Save,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PCReviewRow, PCFlaggedRow, PCReviewThresholds, PCRuleType } from '../types';
@@ -155,6 +156,23 @@ function RuleBadge({ rule }: { rule: PCRuleType }) {
   );
 }
 
+function TemplateButton({ hasTemplate, onClick }: { hasTemplate: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-2 px-4 py-2 text-sm rounded-xl border transition-all shrink-0 ${
+        hasTemplate
+          ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
+          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+      }`}
+    >
+      <LayoutTemplate className="w-4 h-4" />
+      {hasTemplate ? 'Edit Template' : 'Set Template'}
+      {hasTemplate && <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />}
+    </button>
+  );
+}
+
 function ThresholdInput({
   label,
   value,
@@ -219,6 +237,38 @@ export function BookingPCReview() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // ── Template ─────────────────────────────────────────────────────────────────
+
+  const [template, setTemplate] = useState<string>(
+    () => localStorage.getItem('adguard_pc_audit_template') || '',
+  );
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [templateDraft, setTemplateDraft] = useState('');
+  const [templateSaved, setTemplateSaved] = useState(false);
+
+  const openTemplateModal = () => {
+    setTemplateDraft(template);
+    setTemplateSaved(false);
+    setShowTemplateModal(true);
+  };
+
+  const saveTemplate = () => {
+    setTemplate(templateDraft);
+    localStorage.setItem('adguard_pc_audit_template', templateDraft);
+    setTemplateSaved(true);
+    setTimeout(() => {
+      setTemplateSaved(false);
+      setShowTemplateModal(false);
+    }, 800);
+  };
+
+  const clearTemplate = () => {
+    setTemplateDraft('');
+    setTemplate('');
+    localStorage.removeItem('adguard_pc_audit_template');
+    setShowTemplateModal(false);
+  };
+
   // ── File handling ────────────────────────────────────────────────────────────
 
   const processFile = (file: File) => {
@@ -282,7 +332,7 @@ export function BookingPCReview() {
       const res = await fetch('/api/generate-pc-audit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ row, ruleType: row.ruleType, thresholds }),
+        body: JSON.stringify({ row, ruleType: row.ruleType, thresholds, template: template || null }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Generation failed');
@@ -326,11 +376,14 @@ export function BookingPCReview() {
   if (allRows.length === 0) {
     return (
       <div className="space-y-8">
-        <div>
-          <h2 className="text-2xl font-semibold text-gray-900">Booking PC Review</h2>
-          <p className="text-gray-500 mt-1">
-            Upload your Data Studio L7 export to flag accounts needing PC inquiry.
-          </p>
+        <div className="flex items-start justify-between">
+          <div>
+            <h2 className="text-2xl font-semibold text-gray-900">Booking PC Review</h2>
+            <p className="text-gray-500 mt-1">
+              Upload your Data Studio L7 export to flag accounts needing PC inquiry.
+            </p>
+          </div>
+          <TemplateButton hasTemplate={!!template} onClick={openTemplateModal} />
         </div>
 
         {parseError && (
@@ -414,12 +467,15 @@ export function BookingPCReview() {
             {allRows.length} accounts scanned
           </p>
         </div>
-        <button
-          onClick={resetFile}
-          className="px-4 py-2 text-sm bg-white border border-gray-200 rounded-xl text-gray-600 hover:bg-gray-50 transition-all shrink-0"
-        >
-          Upload New File
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <TemplateButton hasTemplate={!!template} onClick={openTemplateModal} />
+          <button
+            onClick={resetFile}
+            className="px-4 py-2 text-sm bg-white border border-gray-200 rounded-xl text-gray-600 hover:bg-gray-50 transition-all"
+          >
+            Upload New File
+          </button>
+        </div>
       </div>
 
       {/* Summary chips */}
@@ -609,6 +665,68 @@ export function BookingPCReview() {
         </div>
       )}
 
+      {/* Template modal */}
+      <AnimatePresence>
+        {showTemplateModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={e => { if (e.target === e.currentTarget) setShowTemplateModal(false); }}
+          >
+            <motion.div
+              initial={{ scale: 0.96, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.96, opacity: 0, y: 10 }}
+              transition={{ duration: 0.18 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[85vh]"
+            >
+              <div className="flex items-start justify-between p-6 border-b border-gray-100">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Audit Request Template</h3>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                    The AI uses this as a structural guide. Leave blank to use the default format.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowTemplateModal(false)}
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-all shrink-0"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6">
+                <textarea
+                  value={templateDraft}
+                  onChange={e => setTemplateDraft(e.target.value)}
+                  className="w-full h-80 p-4 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-800 leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                  placeholder="Paste your audit request template here…"
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-6 border-t border-gray-100">
+                <button
+                  onClick={clearTemplate}
+                  disabled={!templateDraft && !template}
+                  className="px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm text-gray-600 hover:bg-rose-50 hover:border-rose-200 hover:text-rose-600 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Clear Template
+                </button>
+                <button
+                  onClick={saveTemplate}
+                  className="flex items-center gap-2 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-all text-sm font-semibold shadow-sm"
+                >
+                  {templateSaved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+                  {templateSaved ? 'Saved!' : 'Save Template'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Audit modal */}
       <AnimatePresence>
         {selectedRow && (
@@ -629,7 +747,15 @@ export function BookingPCReview() {
               {/* Modal header */}
               <div className="flex items-start justify-between p-6 border-b border-gray-100 gap-4">
                 <div className="min-w-0">
-                  <RuleBadge rule={selectedRow.ruleType} />
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <RuleBadge rule={selectedRow.ruleType} />
+                    {template && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-xs font-medium">
+                        <LayoutTemplate className="w-3 h-3" />
+                        Template applied
+                      </span>
+                    )}
+                  </div>
                   <h3 className="text-lg font-bold text-gray-900 mt-2 leading-tight">
                     PC Audit Request
                   </h3>
