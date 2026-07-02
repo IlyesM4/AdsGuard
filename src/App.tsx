@@ -22,6 +22,7 @@ import {
   MousePointerClick,
   Eye,
   ClipboardCheck,
+  ArrowDownWideNarrow,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -36,6 +37,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [threshold, setThreshold] = useState<AlertThreshold>(2);
   const [activeTab, setActiveTab] = useState<'alerts' | 'cpc' | 'frequency' | 'stats' | 'meeting' | 'clients' | 'pcreview'>('alerts');
+  const [statsSortBy, setStatsSortBy] = useState<'default' | 'highestCPL'>('default');
 
   const handleSaveConfig = (newConfig: FBConfig) => {
     setConfig(newConfig);
@@ -278,10 +280,24 @@ export default function App() {
                       <h2 className="text-2xl font-semibold text-gray-900">Campaign Statistics</h2>
                       <p className="text-gray-500">Overview of active campaigns in the last 7 days</p>
                     </div>
+                    <button
+                      onClick={() => setStatsSortBy(prev => prev === 'highestCPL' ? 'default' : 'highestCPL')}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-xl border transition-all text-sm font-medium shadow-sm ${
+                        statsSortBy === 'highestCPL'
+                          ? 'bg-indigo-600 text-white border-indigo-600'
+                          : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      <ArrowDownWideNarrow className="w-4 h-4" />
+                      Highest Avg CPL
+                    </button>
                   </div>
-                  
+
                   <div className="grid grid-cols-1 gap-6">
-                    {data.flatMap(acc => acc.campaigns.map(campaign => ({ ...campaign, accountId: acc.account_id }))).map(campaign => {
+                    {(statsSortBy === 'highestCPL'
+                      ? data.flatMap(acc => acc.campaigns.map(campaign => ({ ...campaign, accountId: acc.account_id }))).sort((a, b) => b.cpl - a.cpl)
+                      : data.flatMap(acc => acc.campaigns.map(campaign => ({ ...campaign, accountId: acc.account_id })))
+                    ).map(campaign => {
                       const cheapestAd = campaign.ads.reduce((min, ad) => {
                         if (ad.cpl > 0 && (min === null || ad.cpl < min.cpl)) {
                           return ad;
