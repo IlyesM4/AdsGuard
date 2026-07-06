@@ -24,6 +24,34 @@ function sbFetch(path: string, options: RequestInit = {}): Promise<Response> {
   });
 }
 
+const GEMINI_PRIMARY_MODEL = "gemini-3.5-flash";
+const GEMINI_FALLBACK_MODEL = "gemini-2.5-flash-lite";
+
+function isRetryableGeminiError(err: any): boolean {
+  const status = err?.status ?? err?.code;
+  const message = String(err?.message || "");
+  return status === 503 || /UNAVAILABLE/i.test(status) || /high demand|UNAVAILABLE/i.test(message);
+}
+
+// Retries the primary model once on capacity errors (503), then falls back to a
+// more established model rather than surfacing an error to a client-facing report.
+async function generateContentWithFallback(ai: GoogleGenAI, params: Record<string, any>) {
+  try {
+    return await ai.models.generateContent({ ...params, model: GEMINI_PRIMARY_MODEL });
+  } catch (err: any) {
+    if (!isRetryableGeminiError(err)) throw err;
+
+    await new Promise((r) => setTimeout(r, 1500));
+    try {
+      return await ai.models.generateContent({ ...params, model: GEMINI_PRIMARY_MODEL });
+    } catch (err2: any) {
+      if (!isRetryableGeminiError(err2)) throw err2;
+      console.warn(`Gemini ${GEMINI_PRIMARY_MODEL} unavailable, falling back to ${GEMINI_FALLBACK_MODEL}`);
+      return await ai.models.generateContent({ ...params, model: GEMINI_FALLBACK_MODEL });
+    }
+  }
+}
+
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
@@ -118,8 +146,7 @@ INSTRUCTIONS:
 
       if (pdfBase64) {
         // PDF path: pass the document as inline data to Gemini
-        response = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
+        response = await generateContentWithFallback(ai, {
           contents: [
             {
               role: "user",
@@ -138,8 +165,7 @@ INSTRUCTIONS:
           ...rows.map((r: Record<string, string>) => headers.map((h: string) => r[h] ?? "").join(", ")),
         ].join("\n");
 
-        response = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
+        response = await generateContentWithFallback(ai, {
           contents: systemPrompt + `\n\nDATA (CSV):\n${csvTable}\n\nGenerate the meeting prep document now:`,
         });
       }
@@ -221,10 +247,7 @@ Output ONLY the audit request — no preamble, no "Here is the request:" opener.
 
     try {
       const ai = new GoogleGenAI({ apiKey });
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt,
-      });
+      const response = await generateContentWithFallback(ai, { contents: prompt });
       res.json({ output: response.text });
     } catch (err: any) {
       console.error("PC Audit generation error:", err);
