@@ -119,7 +119,7 @@ INSTRUCTIONS:
       if (pdfBase64) {
         // PDF path: pass the document as inline data to Gemini
         response = await ai.models.generateContent({
-          model: "gemini-2.5-flash-lite",
+          model: "gemini-3.5-flash",
           contents: [
             {
               role: "user",
@@ -139,7 +139,7 @@ INSTRUCTIONS:
         ].join("\n");
 
         response = await ai.models.generateContent({
-          model: "gemini-2.5-flash-lite",
+          model: "gemini-3.5-flash",
           contents: systemPrompt + `\n\nDATA (CSV):\n${csvTable}\n\nGenerate the meeting prep document now:`,
         });
       }
@@ -222,7 +222,7 @@ Output ONLY the audit request — no preamble, no "Here is the request:" opener.
     try {
       const ai = new GoogleGenAI({ apiKey });
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash-lite",
+        model: "gemini-3.5-flash",
         contents: prompt,
       });
       res.json({ output: response.text });
