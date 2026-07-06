@@ -198,6 +198,7 @@ export default function App() {
                       <option value={1.15}>15% Higher CPL</option>
                       <option value={2}>2x Avg CPL</option>
                       <option value={3}>3x Avg CPL</option>
+                      <option value={-1}>$100+ CPL (High Cost)</option>
                       <option value={0}>0 Conversions (Wasted)</option>
                     </select>
                   </div>

@@ -37,7 +37,7 @@ export interface AdAccountInsight {
   campaigns: CampaignInsight[];
 }
 
-export type AlertThreshold = 1.15 | 2 | 3 | 0;
+export type AlertThreshold = 1.15 | 2 | 3 | 0 | -1;
 
 export interface AdFrequencyData {
   ad_id: string;

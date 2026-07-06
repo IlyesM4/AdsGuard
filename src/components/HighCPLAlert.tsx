@@ -17,6 +17,10 @@ export const HighCPLAlert: React.FC<HighCPLAlertProps> = ({ data, threshold }) =
             // New threshold: 0 Conversions and there's spend in the last 7 days
             return ad.leads === 0 && ad.spend > 0;
           }
+          if (threshold === -1) {
+            // Flat threshold: CPL of $100+ regardless of campaign average
+            return ad.cpl >= 100;
+          }
           // Original thresholds: High CPL compared to campaign average
           return ad.cpl > 0 && campaign.cpl > 0 && ad.cpl >= campaign.cpl * threshold;
         })
@@ -36,19 +40,21 @@ export const HighCPLAlert: React.FC<HighCPLAlertProps> = ({ data, threshold }) =
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-semibold text-gray-900">
-            {threshold === 0 ? 'Wasted Budget Alerts' : 'High CPL Alerts'}
+            {threshold === 0 ? 'Wasted Budget Alerts' : threshold === -1 ? 'High Cost CPL Alerts' : 'High CPL Alerts'}
           </h2>
           <p className="text-gray-500">
-            {threshold === 0 
+            {threshold === 0
               ? 'Ads with spend but 0 conversions in the last 7 days'
+              : threshold === -1
+              ? 'Ads with a CPL of $100 or more, regardless of campaign average'
               : 'Comparing individual ad CPL vs campaign average (Last 7 Days)'}
           </p>
         </div>
         <div className={`flex items-center gap-2 px-4 py-2 border rounded-full ${
-          threshold === 0 ? 'bg-rose-50 border-rose-100' : 'bg-amber-50 border-amber-100'
+          threshold === 0 || threshold === -1 ? 'bg-rose-50 border-rose-100' : 'bg-amber-50 border-amber-100'
         }`}>
-          <AlertTriangle className={`w-4 h-4 ${threshold === 0 ? 'text-rose-600' : 'text-amber-600'}`} />
-          <span className={`text-sm font-medium ${threshold === 0 ? 'text-rose-900' : 'text-amber-900'}`}>
+          <AlertTriangle className={`w-4 h-4 ${threshold === 0 || threshold === -1 ? 'text-rose-600' : 'text-amber-600'}`} />
+          <span className={`text-sm font-medium ${threshold === 0 || threshold === -1 ? 'text-rose-900' : 'text-amber-900'}`}>
             {flaggedAds.length} Alerts Found
           </span>
         </div>
@@ -61,8 +67,10 @@ export const HighCPLAlert: React.FC<HighCPLAlertProps> = ({ data, threshold }) =
           </div>
           <h3 className="text-xl font-medium text-emerald-900">All Performance Normal</h3>
           <p className="text-emerald-700">
-            {threshold === 0 
+            {threshold === 0
               ? 'No ads are currently spending without producing conversions.'
+              : threshold === -1
+              ? 'No ads currently have a CPL of $100 or more.'
               : `No ads are currently exceeding the ${threshold === 1.15 ? '15% higher' : `${threshold}x`} CPL threshold.`}
           </p>
         </div>
@@ -79,13 +87,15 @@ export const HighCPLAlert: React.FC<HighCPLAlertProps> = ({ data, threshold }) =
               <div className="bg-rose-50 px-6 py-3 border-b border-rose-100 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-bold uppercase tracking-wider text-rose-600 bg-white px-2 py-1 rounded border border-rose-200">
-                    {threshold === 0 ? 'Wasted Budget' : 'High CPL Alert'}
+                    {threshold === 0 ? 'Wasted Budget' : threshold === -1 ? 'High Cost CPL' : 'High CPL Alert'}
                   </span>
                   <span className="text-sm font-medium text-rose-900">Account: {ad.accountId}</span>
                 </div>
                 <div className="text-sm font-semibold text-rose-700">
-                  {threshold === 0 
+                  {threshold === 0
                     ? '0 Conversions Found'
+                    : threshold === -1
+                    ? `$${ad.cpl.toFixed(2)} CPL`
                     : `${((ad.cpl / ad.campaignCPL)).toFixed(1)}x Campaign Avg`}
                 </div>
               </div>
