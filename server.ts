@@ -27,19 +27,37 @@ function sbFetch(path: string, options: RequestInit = {}): Promise<Response> {
 const GEMINI_PRIMARY_MODEL = "gemini-3.5-flash";
 const GEMINI_FALLBACK_MODEL = "gemini-2.5-flash-lite";
 
-function isRetryableGeminiError(err: any): boolean {
+function isQuotaExceededError(err: any): boolean {
+  const status = err?.status ?? err?.code;
+  const message = String(err?.message || "");
+  return status === 429 || /RESOURCE_EXHAUSTED/i.test(status) || /quota|RESOURCE_EXHAUSTED/i.test(message);
+}
+
+function isOverloadedError(err: any): boolean {
   const status = err?.status ?? err?.code;
   const message = String(err?.message || "");
   return status === 503 || /UNAVAILABLE/i.test(status) || /high demand|UNAVAILABLE/i.test(message);
 }
 
-// Retries the primary model once on capacity errors (503), then falls back to a
-// more established model rather than surfacing an error to a client-facing report.
+function isRetryableGeminiError(err: any): boolean {
+  return isQuotaExceededError(err) || isOverloadedError(err);
+}
+
+// Falls back to a more established model rather than surfacing an error to a
+// client-facing report. Quota errors (429) skip the retry — the same model's
+// daily quota won't refill in 1.5s — and go straight to the fallback model,
+// which draws from its own separate per-model quota. Capacity errors (503)
+// get one retry first, since those are often transient.
 async function generateContentWithFallback(ai: GoogleGenAI, params: Record<string, any>) {
   try {
     return await ai.models.generateContent({ ...params, model: GEMINI_PRIMARY_MODEL });
   } catch (err: any) {
     if (!isRetryableGeminiError(err)) throw err;
+
+    if (isQuotaExceededError(err)) {
+      console.warn(`Gemini ${GEMINI_PRIMARY_MODEL} quota exceeded, falling back to ${GEMINI_FALLBACK_MODEL}`);
+      return await ai.models.generateContent({ ...params, model: GEMINI_FALLBACK_MODEL });
+    }
 
     await new Promise((r) => setTimeout(r, 1500));
     try {
