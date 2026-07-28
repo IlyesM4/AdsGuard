@@ -138,6 +138,14 @@ export interface PCReviewRow {
   roas: number | null;
 }
 
+export interface AuditFileData {
+  fileName: string;
+  fileType: 'csv' | 'pdf';
+  headers?: string[];
+  rows?: Record<string, string>[];
+  pdfBase64?: string;
+}
+
 export type PCRuleType = 'rule1' | 'rule2' | 'both';
 
 export interface PCFlaggedRow extends PCReviewRow {

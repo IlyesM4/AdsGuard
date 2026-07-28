@@ -273,6 +273,79 @@ Output ONLY the audit request — no preamble, no "Here is the request:" opener.
     }
   });
 
+  // Ad Account Audit generation
+  app.post("/api/generate-audit", express.json({ limit: "20mb" }), async (req, res) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(400).json({ error: "GEMINI_API_KEY is not set in environment variables." });
+    }
+
+    const { files, template } = req.body;
+    if (!template) {
+      return res.status(400).json({ error: "Missing template in request body." });
+    }
+
+    const periodOrder: Array<{ key: string; label: string }> = [
+      { key: "period30", label: "Last 30 Days" },
+      { key: "period14", label: "Last 14 Days" },
+      { key: "period7", label: "Last 7 Days" },
+      { key: "notes", label: "Control Center Notes" },
+    ];
+
+    const present = periodOrder.filter(p => files?.[p.key]);
+    if (present.length === 0) {
+      return res.status(400).json({ error: "Upload at least one file (L7, L14, L30, or Control Center notes)." });
+    }
+
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+
+      const dataParts: any[] = [];
+      for (const { key, label } of present) {
+        const f = files[key];
+        dataParts.push({ text: `=== ${label} ===` });
+        if (f.fileType === "pdf" && f.pdfBase64) {
+          dataParts.push({ inlineData: { mimeType: "application/pdf", data: f.pdfBase64 } });
+        } else if (f.headers && f.rows) {
+          const csvTable = [
+            f.headers.join(", "),
+            ...f.rows.map((r: Record<string, string>) => f.headers.map((h: string) => r[h] ?? "").join(", ")),
+          ].join("\n");
+          dataParts.push({ text: csvTable });
+        }
+      }
+
+      const systemPrompt = `You are an ads account manager writing an internal audit write-up to hand off to whoever picks up this task.
+
+OUTPUT TEMPLATE (structure & style guide):
+${template}
+
+INSTRUCTIONS:
+- Use the template above as a STRUCTURAL AND STYLE GUIDE ONLY — it defines the sections, tone, and format of your output.
+- Do NOT copy the template text literally. Analyze the attached data and write real, data-driven content in that style.
+- Extract actual numbers, metrics, and trends from the attached period data (Last 7 / 14 / 30 Days) and Control Center Notes, whichever are present.
+- Explicitly compare periods where more than one is present (WoW, L7 vs L14 vs L30) and call out the trend direction.
+- If the account spans multiple niches, locations, or campaigns, give each its own short section.
+- Explain the reasoning/root cause behind metric movements, not just the numbers themselves.
+- If a section's data isn't available, skip it briefly rather than leaving a placeholder.
+- Write ONLY the completed audit — no meta-commentary, no preamble, no "Here is the audit:" opener.`;
+
+      const response = await generateContentWithFallback(ai, {
+        contents: [
+          {
+            role: "user",
+            parts: [...dataParts, { text: systemPrompt + "\n\nGenerate the audit now:" }],
+          },
+        ],
+      });
+
+      res.json({ output: response.text });
+    } catch (err: any) {
+      console.error("Audit generation error:", err);
+      res.status(500).json({ error: err.message || "Generation failed" });
+    }
+  });
+
   // ── Client Memory API ──────────────────────────────────────────────────
 
   // GET /api/clients — list all clients with report count

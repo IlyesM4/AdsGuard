@@ -8,6 +8,7 @@ import { FrequencyAlert } from './components/FrequencyAlert';
 import { MeetingPrep } from './components/MeetingPrep';
 import { ClientHistory } from './components/ClientHistory';
 import { BookingPCReview } from './components/BookingPCReview';
+import { AdAccountAudit } from './components/AdAccountAudit';
 import {
   LayoutDashboard,
   Bell,
@@ -23,6 +24,7 @@ import {
   Eye,
   ClipboardCheck,
   ArrowDownWideNarrow,
+  Stethoscope,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -36,7 +38,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [threshold, setThreshold] = useState<AlertThreshold>(2);
-  const [activeTab, setActiveTab] = useState<'alerts' | 'cpc' | 'frequency' | 'stats' | 'meeting' | 'clients' | 'pcreview'>('alerts');
+  const [activeTab, setActiveTab] = useState<'alerts' | 'cpc' | 'frequency' | 'stats' | 'meeting' | 'clients' | 'pcreview' | 'audit'>('alerts');
   const [statsSortBy, setStatsSortBy] = useState<'default' | 'highestCPL'>('default');
 
   const handleSaveConfig = (newConfig: FBConfig) => {
@@ -182,6 +184,17 @@ export default function App() {
             <ClipboardCheck className="w-5 h-5" />
             PC Review
           </button>
+          <button
+            onClick={() => setActiveTab('audit')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
+              activeTab === 'audit'
+                ? 'bg-indigo-50 text-indigo-600 font-semibold'
+                : 'text-gray-500 hover:bg-gray-50'
+            }`}
+          >
+            <Stethoscope className="w-5 h-5" />
+            Ad Account Audit
+          </button>
         </nav>
 
         <div className="p-4 border-t border-gray-100 space-y-2">
@@ -274,6 +287,8 @@ export default function App() {
                 <ClientHistory />
               ) : activeTab === 'pcreview' ? (
                 <BookingPCReview />
+              ) : activeTab === 'audit' ? (
+                <AdAccountAudit />
               ) : (
                 <div className="space-y-8">
                   <div className="flex items-center justify-between">
