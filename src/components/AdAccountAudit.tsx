@@ -4,7 +4,7 @@ import {
   RotateCcw, Save, ChevronDown, Trash2, X,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { AuditFileData } from '../types';
+import { UploadedFileData } from '../types';
 
 function parseCSV(text: string): { headers: string[]; rows: Record<string, string>[] } {
   const lines = text.trim().split(/\r?\n/);
@@ -111,7 +111,7 @@ function UploadSlot({
   label: string;
   accept: string;
   pdfAllowed: boolean;
-  file: AuditFileData | null;
+  file: UploadedFileData | null;
   onFile: (file: File) => void;
   onClear: () => void;
   error?: string;
@@ -184,7 +184,7 @@ function UploadSlot({
 export function AdAccountAudit() {
   const [step, setStep] = useState<1 | 2 | 3>(1);
 
-  const [files, setFiles] = useState<Record<SlotKey, AuditFileData | null>>({
+  const [files, setFiles] = useState<Record<SlotKey, UploadedFileData | null>>({
     period7: null,
     period14: null,
     period30: null,

@@ -138,7 +138,7 @@ export interface PCReviewRow {
   roas: number | null;
 }
 
-export interface AuditFileData {
+export interface UploadedFileData {
   fileName: string;
   fileType: 'csv' | 'pdf';
   headers?: string[];

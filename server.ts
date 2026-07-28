@@ -102,12 +102,12 @@ async function startServer() {
       return res.status(400).json({ error: "GEMINI_API_KEY is not set in environment variables." });
     }
 
-    const { rows, headers, template, clientName, niche, pdfBase64, clientId } = req.body;
+    const { files, template, clientName, niche, clientId } = req.body;
     if (!template) {
       return res.status(400).json({ error: "Missing template in request body." });
     }
-    if (!rows && !pdfBase64) {
-      return res.status(400).json({ error: "Missing data: provide either CSV rows or pdfBase64." });
+    if (!Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({ error: "Missing data: upload at least one CSV or PDF file." });
     }
 
     try {
@@ -153,6 +153,7 @@ INSTRUCTIONS:
 - If the template mentions a client name or niche and they are provided in CONTEXT above, use those values.
 - Format numbers: currencies as $X,XXX · percentages as X% · whole numbers for counts.
 - If data for a section is unavailable, note it briefly rather than leaving a blank.
+- Multiple files may be attached below — combine and cross-reference them to build a complete picture. If the same period/metric appears in more than one file, reconcile them rather than double-counting.
 - Write ONLY the completed meeting prep document — no meta-commentary, no preamble.${clientHistory.length > 0 ? `
 - HISTORICAL ANALYSIS: You have access to this client's previous reports above. Use them to:
   • Note what has CHANGED since the last report (metrics trending up or down)
@@ -160,33 +161,28 @@ INSTRUCTIONS:
   • Surface GROWTH OPPORTUNITIES based on observed patterns
   • If post-meeting notes exist, factor in what actually happened after that session` : ""}`;
 
-      let response;
+      const dataParts: any[] = [];
+      files.forEach((f: any, i: number) => {
+        dataParts.push({ text: `=== File ${i + 1}: ${f.fileName} ===` });
+        if (f.fileType === "pdf" && f.pdfBase64) {
+          dataParts.push({ inlineData: { mimeType: "application/pdf", data: f.pdfBase64 } });
+        } else if (f.headers && f.rows) {
+          const csvTable = [
+            f.headers.join(", "),
+            ...f.rows.map((r: Record<string, string>) => f.headers.map((h: string) => r[h] ?? "").join(", ")),
+          ].join("\n");
+          dataParts.push({ text: csvTable });
+        }
+      });
 
-      if (pdfBase64) {
-        // PDF path: pass the document as inline data to Gemini
-        response = await generateContentWithFallback(ai, {
-          contents: [
-            {
-              role: "user",
-              parts: [
-                { text: systemPrompt + "\n\nDATA (see attached PDF):" },
-                { inlineData: { mimeType: "application/pdf", data: pdfBase64 } },
-                { text: "Generate the meeting prep document now:" },
-              ],
-            },
-          ],
-        });
-      } else {
-        // CSV path: embed the table as text
-        const csvTable = [
-          headers.join(", "),
-          ...rows.map((r: Record<string, string>) => headers.map((h: string) => r[h] ?? "").join(", ")),
-        ].join("\n");
-
-        response = await generateContentWithFallback(ai, {
-          contents: systemPrompt + `\n\nDATA (CSV):\n${csvTable}\n\nGenerate the meeting prep document now:`,
-        });
-      }
+      const response = await generateContentWithFallback(ai, {
+        contents: [
+          {
+            role: "user",
+            parts: [...dataParts, { text: systemPrompt + "\n\nGenerate the meeting prep document now:" }],
+          },
+        ],
+      });
 
       res.json({ output: response.text });
     } catch (err: any) {

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, FileText, Wand2, Check, ChevronRight, ChevronLeft, Copy, RotateCcw, Save, ChevronDown, Trash2, Users, BookOpen } from 'lucide-react';
+import { Upload, FileText, Wand2, Check, ChevronRight, ChevronLeft, Copy, RotateCcw, Save, ChevronDown, Trash2, Users, BookOpen, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Client } from '../types';
+import { Client, UploadedFileData } from '../types';
 
 function parseCSV(text: string): { headers: string[]; rows: Record<string, string>[] } {
   const lines = text.trim().split(/\r?\n/);
@@ -44,10 +44,7 @@ export function MeetingPrep() {
   const [step, setStep] = useState<1 | 2 | 3>(1);
 
   // File data
-  const [csvData, setCsvData] = useState<{ headers: string[]; rows: Record<string, string>[] } | null>(null);
-  const [fileName, setFileName] = useState('');
-  const [fileType, setFileType] = useState<'csv' | 'pdf' | null>(null);
-  const [pdfBase64, setPdfBase64] = useState('');
+  const [files, setFiles] = useState<UploadedFileData[]>([]);
 
   // Client selection
   const [clients, setClients] = useState<Client[]>([]);
@@ -107,10 +104,7 @@ export function MeetingPrep() {
           setError('Could not parse CSV. Make sure the file has a header row.');
           return;
         }
-        setCsvData(parsed);
-        setPdfBase64('');
-        setFileType('csv');
-        setFileName(file.name);
+        setFiles(prev => [...prev, { fileName: file.name, fileType: 'csv', headers: parsed.headers, rows: parsed.rows }]);
       };
       reader.readAsText(file);
     } else if (file.name.toLowerCase().endsWith('.pdf')) {
@@ -118,10 +112,7 @@ export function MeetingPrep() {
       reader.onload = (e) => {
         const dataUrl = e.target?.result as string;
         const base64 = dataUrl.split(',')[1];
-        setPdfBase64(base64);
-        setCsvData(null);
-        setFileType('pdf');
-        setFileName(file.name);
+        setFiles(prev => [...prev, { fileName: file.name, fileType: 'pdf', pdfBase64: base64 }]);
       };
       reader.readAsDataURL(file);
     } else {
@@ -129,11 +120,18 @@ export function MeetingPrep() {
     }
   };
 
+  const handleFiles = (fileList: FileList | File[]) => {
+    Array.from(fileList).forEach(handleFile);
+  };
+
+  const removeFile = (index: number) => {
+    setFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
+    if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
   };
 
   const saveTemplate = () => {
@@ -165,7 +163,7 @@ export function MeetingPrep() {
   };
 
   const generate = async () => {
-    if ((!csvData && !pdfBase64) || !template.trim()) return;
+    if (files.length === 0 || !template.trim()) return;
     setLoading(true);
     setError('');
     setOutput('');
@@ -173,9 +171,7 @@ export function MeetingPrep() {
     setSaveStatus('idle');
     setPostMeetingNotes('');
     try {
-      const body = fileType === 'pdf'
-        ? { pdfBase64, template, clientName: effectiveClientName, niche: effectiveNiche, clientId: clientMode === 'existing' ? selectedClientId : null }
-        : { rows: csvData!.rows, headers: csvData!.headers, template, clientName: effectiveClientName, niche: effectiveNiche, clientId: clientMode === 'existing' ? selectedClientId : null };
+      const body = { files, template, clientName: effectiveClientName, niche: effectiveNiche, clientId: clientMode === 'existing' ? selectedClientId : null };
 
       const res = await fetch('/api/generate-meeting-prep', {
         method: 'POST',
@@ -217,10 +213,11 @@ export function MeetingPrep() {
         setClients(prev => [...prev, data.client].sort((a, b) => a.name.localeCompare(b.name)));
       }
 
+      const combinedFileName = files.map(f => f.fileName).join(', ');
       const res = await fetch('/api/meeting-preps', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId, output, fileName: fileName || null, templateName: templateName || null, template: template || null }),
+        body: JSON.stringify({ clientId, output, fileName: combinedFileName || null, templateName: templateName || null, template: template || null }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to save report');
@@ -256,10 +253,7 @@ export function MeetingPrep() {
 
   const reset = () => {
     setOutput('');
-    setCsvData(null);
-    setFileName('');
-    setFileType(null);
-    setPdfBase64('');
+    setFiles([]);
     setSavedPrepId(null);
     setSaveStatus('idle');
     setPostMeetingNotes('');
@@ -268,7 +262,7 @@ export function MeetingPrep() {
   };
 
   const isCompleted = (s: number) => {
-    if (s === 1) return !!fileType;
+    if (s === 1) return files.length > 0;
     if (s === 2) return !!template.trim();
     return false;
   };
@@ -280,6 +274,7 @@ export function MeetingPrep() {
 
   const stepLabels = ['Upload File', 'Template', 'Generate'];
   const templateNames = Object.keys(savedTemplates);
+  const csvHeaders = Array.from(new Set(files.flatMap(f => f.headers ?? [])));
 
   return (
     <div className="space-y-8 max-w-4xl">
@@ -418,32 +413,21 @@ export function MeetingPrep() {
                   ref={fileRef}
                   type="file"
                   accept=".csv,.pdf"
+                  multiple
                   className="hidden"
-                  onChange={(e) => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }}
+                  onChange={(e) => { if (e.target.files?.length) handleFiles(e.target.files); e.target.value = ''; }}
                 />
                 <div className="flex flex-col items-center gap-4">
-                  <div className={`p-4 rounded-2xl ${fileType ? 'bg-emerald-100' : 'bg-indigo-100'}`}>
-                    {fileType
+                  <div className={`p-4 rounded-2xl ${files.length ? 'bg-emerald-100' : 'bg-indigo-100'}`}>
+                    {files.length
                       ? <Check className="w-8 h-8 text-emerald-600" />
                       : <Upload className="w-8 h-8 text-indigo-600" />
                     }
                   </div>
-                  {fileType ? (
-                    <>
-                      <p className="font-semibold text-gray-900">{fileName}</p>
-                      <p className="text-sm text-gray-500">
-                        {fileType === 'csv'
-                          ? `${csvData?.rows.length} rows · ${csvData?.headers.length} columns · Click to replace`
-                          : 'PDF uploaded · Click to replace'
-                        }
-                      </p>
-                    </>
-                  ) : (
-                    <>
-                      <p className="font-semibold text-gray-900">Drop your file here, or click to browse</p>
-                      <p className="text-sm text-gray-500">Supports CSV and PDF</p>
-                    </>
-                  )}
+                  <p className="font-semibold text-gray-900">
+                    {files.length ? 'Drop more files, or click to add another' : 'Drop your files here, or click to browse'}
+                  </p>
+                  <p className="text-sm text-gray-500">Supports CSV and PDF · upload as many as you need</p>
                 </div>
               </div>
 
@@ -451,44 +435,34 @@ export function MeetingPrep() {
                 <p className="text-sm text-rose-600 bg-rose-50 px-4 py-3 rounded-xl border border-rose-100">{error}</p>
               )}
 
-              {/* CSV Preview */}
-              {csvData && (
-                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                  <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-gray-400" />
-                      <span className="text-sm font-semibold text-gray-700">Preview</span>
+              {/* Uploaded files list */}
+              {files.length > 0 && (
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm divide-y divide-gray-50">
+                  {files.map((f, i) => (
+                    <div key={i} className="flex items-center justify-between gap-3 px-5 py-3.5">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="p-1.5 bg-emerald-100 rounded-lg flex-shrink-0">
+                          <FileText className="w-3.5 h-3.5 text-emerald-600" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-900 truncate">{f.fileName}</p>
+                          <p className="text-xs text-gray-500">
+                            {f.fileType === 'csv' ? `${f.rows?.length ?? 0} rows · ${f.headers?.length ?? 0} columns` : 'PDF'}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => removeFile(i)}
+                        className="p-1.5 rounded-lg text-gray-300 hover:text-rose-500 hover:bg-rose-50 transition-colors flex-shrink-0"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
                     </div>
-                    <span className="text-xs text-gray-400">First 5 rows</span>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          {csvData.headers.map(h => (
-                            <th key={h} className="px-4 py-3 text-left font-semibold text-gray-600 whitespace-nowrap text-xs uppercase tracking-wide">
-                              {h}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-50">
-                        {csvData.rows.slice(0, 5).map((row, i) => (
-                          <tr key={i} className="hover:bg-gray-50">
-                            {csvData.headers.map(h => (
-                              <td key={h} className="px-4 py-3 text-gray-700 whitespace-nowrap max-w-[180px] truncate">
-                                {row[h]}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  ))}
                 </div>
               )}
 
-              {fileType && (
+              {files.length > 0 && (
                 <div className="flex justify-end">
                   <button
                     onClick={() => setStep(2)}
@@ -505,13 +479,13 @@ export function MeetingPrep() {
           {/* ── Step 2: Template ── */}
           {step === 2 && (
             <div className="space-y-6">
-              {csvData && (
+              {csvHeaders.length > 0 && (
                 <div className="bg-indigo-50 rounded-xl px-5 py-4 border border-indigo-100">
                   <p className="text-xs font-semibold text-indigo-600 uppercase tracking-wider mb-2">
-                    Columns available in your CSV
+                    Columns available across your uploaded CSV{files.filter(f => f.fileType === 'csv').length > 1 ? 's' : ''}
                   </p>
                   <div className="flex flex-wrap gap-2">
-                    {csvData.headers.map(h => (
+                    {csvHeaders.map(h => (
                       <span key={h} className="text-xs font-mono bg-white border border-indigo-200 text-indigo-700 px-2.5 py-1 rounded-lg">
                         {h}
                       </span>
@@ -614,14 +588,18 @@ export function MeetingPrep() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
                   <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">
-                    {fileType === 'pdf' ? 'PDF File' : 'CSV Data'}
+                    Uploaded Data ({files.length} file{files.length !== 1 ? 's' : ''})
                   </p>
-                  <p className="font-semibold text-gray-900 truncate">{fileName}</p>
-                  {fileType === 'csv' && (
-                    <p className="text-sm text-gray-500 mt-0.5">
-                      {csvData?.rows.length} rows · {csvData?.headers.length} columns
-                    </p>
-                  )}
+                  <div className="space-y-0.5">
+                    {files.map((f, i) => (
+                      <p key={i} className="text-sm font-semibold text-gray-900 truncate">
+                        {f.fileName}
+                        <span className="text-xs font-normal text-gray-500">
+                          {' '}— {f.fileType === 'csv' ? `${f.rows?.length ?? 0} rows` : 'PDF'}
+                        </span>
+                      </p>
+                    ))}
+                  </div>
                   {effectiveClientName && (
                     <p className="text-xs text-indigo-600 mt-1.5 flex items-center gap-1">
                       <Users className="w-3 h-3" />
