@@ -80,12 +80,13 @@ Tone rules:
 - Keep paragraphs short and conversational; use numbered lists only for next-step action items
 - Don't pad with fluff or corporate-speak — write the way you'd actually type a quick internal note`;
 
-type SlotKey = 'period7' | 'period14' | 'period30' | 'notes';
+type SlotKey = 'period7' | 'period14' | 'period30' | 'period90' | 'notes';
 
 const SLOTS: { key: SlotKey; label: string; accept: string; pdfAllowed: boolean }[] = [
   { key: 'period7', label: 'Last 7 Days', accept: '.csv,.pdf', pdfAllowed: true },
   { key: 'period14', label: 'Last 14 Days', accept: '.csv,.pdf', pdfAllowed: true },
   { key: 'period30', label: 'Last 30 Days', accept: '.csv,.pdf', pdfAllowed: true },
+  { key: 'period90', label: 'Last 90 Days', accept: '.csv,.pdf', pdfAllowed: true },
   { key: 'notes', label: 'Control Center Notes', accept: '.csv', pdfAllowed: false },
 ];
 
@@ -188,6 +189,7 @@ export function AdAccountAudit() {
     period7: null,
     period14: null,
     period30: null,
+    period90: null,
     notes: null,
   });
   const [fileErrors, setFileErrors] = useState<Partial<Record<SlotKey, string>>>({});
@@ -296,7 +298,7 @@ export function AdAccountAudit() {
 
   const reset = () => {
     setOutput('');
-    setFiles({ period7: null, period14: null, period30: null, notes: null });
+    setFiles({ period7: null, period14: null, period30: null, period90: null, notes: null });
     setFileErrors({});
     setStep(1);
   };
@@ -371,7 +373,7 @@ export function AdAccountAudit() {
               </div>
 
               <p className="text-xs text-gray-400 px-1">
-                {hasAnyFile ? `${uploadedCount} of 4 files uploaded — at least one is required.` : 'Upload at least one file to continue.'}
+                {hasAnyFile ? `${uploadedCount} of ${SLOTS.length} files uploaded — at least one is required.` : 'Upload at least one file to continue.'}
               </p>
 
               {hasAnyFile && (
@@ -482,7 +484,7 @@ export function AdAccountAudit() {
           {/* ── Step 3: Generate ── */}
           {step === 3 && (
             <div className="space-y-6">
-              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 grid grid-cols-2 sm:grid-cols-5 gap-4">
                 {SLOTS.map(slot => (
                   <div key={slot.key}>
                     <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">{slot.label}</p>

@@ -70,6 +70,63 @@ async function generateContentWithFallback(ai: GoogleGenAI, params: Record<strin
   }
 }
 
+// Numeric columns that are safe to sum across adset rows (their ratios — CPL,
+// ROAS, Booking %, etc. — are re-derived from these sums, never averaged from
+// the per-row CPL/ROAS/etc. columns, which would double-weight low-spend rows).
+const ADSET_SUM_FIELDS = [
+  "Spend", "Unique Clicks", "Leads In", "Disqualifieds", "DNDs",
+  "Unique Leads", "Schedules", "Shows", "Closes", "Revenue",
+] as const;
+
+function parseAdsetNum(v: string | undefined): number {
+  if (v === undefined) return 0;
+  const n = parseFloat(v.replace(/[$,%]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function summarizeAdsetRows(rows: Record<string, string>[]) {
+  const totals: Record<string, number> = {};
+  for (const field of ADSET_SUM_FIELDS) totals[field] = 0;
+  for (const row of rows) {
+    for (const field of ADSET_SUM_FIELDS) {
+      totals[field] += parseAdsetNum(row[field]);
+    }
+  }
+
+  const spend = totals["Spend"];
+  const leads = totals["Leads In"];
+  const schedules = totals["Schedules"];
+  const shows = totals["Shows"];
+  const closes = totals["Closes"];
+  const revenue = totals["Revenue"];
+
+  const div = (num: number, den: number) => (den > 0 ? num / den : null);
+
+  return {
+    ...totals,
+    cpl: div(spend, leads),
+    cpSchedule: div(spend, schedules),
+    cpShow: div(spend, shows),
+    cpClose: div(spend, closes),
+    roas: div(revenue, spend),
+    bookingPct: div(schedules, leads),
+    showPct: div(shows, schedules),
+    closePct: div(closes, shows),
+  };
+}
+
+function fmtMoney(n: number | null): string {
+  return n === null ? "n/a" : `$${n.toFixed(2)}`;
+}
+
+function fmtPct(n: number | null): string {
+  return n === null ? "n/a" : `${(n * 100).toFixed(1)}%`;
+}
+
+function formatPeriodSummaryLine(label: string, s: ReturnType<typeof summarizeAdsetRows>): string {
+  return `${label}: Spend $${s["Spend"].toFixed(2)} | Leads ${s["Leads In"]} | CPL ${fmtMoney(s.cpl)} | Schedules ${s["Schedules"]} | CPSchedule ${fmtMoney(s.cpSchedule)} | Shows ${s["Shows"]} | CPShow ${fmtMoney(s.cpShow)} | Closes ${s["Closes"]} | CPClose ${fmtMoney(s.cpClose)} | Revenue $${s["Revenue"].toFixed(2)} | ROAS ${s.roas === null ? "n/a" : s.roas.toFixed(2) + "x"} | Booking % ${fmtPct(s.bookingPct)} | Show % ${fmtPct(s.showPct)} | Close % ${fmtPct(s.closePct)}`;
+}
+
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
@@ -282,30 +339,59 @@ Output ONLY the audit request — no preamble, no "Here is the request:" opener.
     }
 
     const periodOrder: Array<{ key: string; label: string }> = [
-      { key: "period30", label: "Last 30 Days" },
-      { key: "period14", label: "Last 14 Days" },
       { key: "period7", label: "Last 7 Days" },
-      { key: "notes", label: "Control Center Notes" },
+      { key: "period14", label: "Last 14 Days" },
+      { key: "period30", label: "Last 30 Days" },
+      { key: "period90", label: "Last 90 Days" },
     ];
 
-    const present = periodOrder.filter(p => files?.[p.key]);
-    if (present.length === 0) {
-      return res.status(400).json({ error: "Upload at least one file (L7, L14, L30, or Control Center notes)." });
+    const presentPeriods = periodOrder.filter(p => files?.[p.key]);
+    const notesFile = files?.notes;
+    if (presentPeriods.length === 0 && !notesFile) {
+      return res.status(400).json({ error: "Upload at least one file (L7, L14, L30, L90, or Control Center notes)." });
     }
 
     try {
       const ai = new GoogleGenAI({ apiKey });
 
-      const dataParts: any[] = [];
-      for (const { key, label } of present) {
+      // Numbers computed here (not by the model) are the only source of truth for
+      // period totals — an LLM asked to sum dozens of messy per-adset CSV rows
+      // (blank spend rows, "-" placeholders, per-row CPL that can't just be averaged)
+      // gets blended metrics like CPL/ROAS wrong. Pre-aggregating removes that step.
+      const summaryRows: string[] = [];
+      const rawDataParts: any[] = [];
+
+      for (const { key, label } of presentPeriods) {
         const f = files[key];
-        dataParts.push({ text: `=== ${label} ===` });
-        if (f.fileType === "pdf" && f.pdfBase64) {
-          dataParts.push({ inlineData: { mimeType: "application/pdf", data: f.pdfBase64 } });
-        } else if (f.headers && f.rows) {
+        if (f.fileType === "csv" && f.headers && f.rows) {
+          const summary = summarizeAdsetRows(f.rows);
+          summaryRows.push(formatPeriodSummaryLine(label, summary));
+          rawDataParts.push({ text: `=== ${label} — raw per-adset detail (for root-cause narrative only, NOT for recomputing totals) ===` });
           const csvTable = [
             f.headers.join(", "),
             ...f.rows.map((r: Record<string, string>) => f.headers.map((h: string) => r[h] ?? "").join(", ")),
+          ].join("\n");
+          rawDataParts.push({ text: csvTable });
+        } else if (f.fileType === "pdf" && f.pdfBase64) {
+          summaryRows.push(`${label}: (PDF upload — no computed totals available, read directly from the attached PDF)`);
+          rawDataParts.push({ text: `=== ${label} (PDF) ===` });
+          rawDataParts.push({ inlineData: { mimeType: "application/pdf", data: f.pdfBase64 } });
+        }
+      }
+
+      const dataParts: any[] = [];
+      if (summaryRows.length > 0) {
+        dataParts.push({
+          text: `=== COMPUTED PERIOD TOTALS (authoritative — pre-calculated from the raw data, use these exact figures) ===\n${summaryRows.join("\n")}`,
+        });
+      }
+      dataParts.push(...rawDataParts);
+      if (notesFile) {
+        dataParts.push({ text: `=== Control Center Notes (background/history only — may be stale; do NOT treat any numbers or dated snapshot inside this file as current performance data) ===` });
+        if (notesFile.fileType === "csv" && notesFile.headers && notesFile.rows) {
+          const csvTable = [
+            notesFile.headers.join(", "),
+            ...notesFile.rows.map((r: Record<string, string>) => notesFile.headers.map((h: string) => r[h] ?? "").join(", ")),
           ].join("\n");
           dataParts.push({ text: csvTable });
         }
@@ -319,8 +405,10 @@ ${template}
 INSTRUCTIONS:
 - Use the template above as a STRUCTURAL AND STYLE GUIDE ONLY — it defines the sections, tone, and format of your output.
 - Do NOT copy the template text literally. Analyze the attached data and write real, data-driven content in that style.
-- Extract actual numbers, metrics, and trends from the attached period data (Last 7 / 14 / 30 Days) and Control Center Notes, whichever are present.
-- Explicitly compare periods where more than one is present (WoW, L7 vs L14 vs L30) and call out the trend direction.
+- The "COMPUTED PERIOD TOTALS" block is authoritative for every metric it contains (CPL, CPSchedule, CPShow, CPClose, ROAS, Booking %, Show %, Close %). Always cite those exact figures — do NOT recompute or re-derive them yourself from the raw per-adset rows, and do NOT let anything in Control Center Notes override them.
+- Use the raw per-adset rows only to explain WHY a total moved (which adset drove it, creative fatigue, budget cap, etc.) — not to recompute totals.
+- Control Center Notes is historical background/context (what happened, when, and why) — it may be several days older than the period data. If a note's narrative or any number in it conflicts with the COMPUTED PERIOD TOTALS, the COMPUTED PERIOD TOTALS win; use Notes only for timeline/events/root-cause context, not as a source of current metrics.
+- Explicitly compare periods where more than one is present (WoW, L7 vs L14 vs L30 vs L90) and call out the trend direction.
 - If the account spans multiple niches, locations, or campaigns, give each its own short section.
 - Explain the reasoning/root cause behind metric movements, not just the numbers themselves.
 - If a section's data isn't available, skip it briefly rather than leaving a placeholder.
