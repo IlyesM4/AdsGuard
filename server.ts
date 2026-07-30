@@ -153,7 +153,7 @@ async function startServer() {
   });
 
   // Meeting Prep generation (CSV or PDF)
-  app.post("/api/generate-meeting-prep", express.json({ limit: "20mb" }), async (req, res) => {
+  app.post("/api/generate-meeting-prep", express.json({ limit: "40mb" }), async (req, res) => {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return res.status(400).json({ error: "GEMINI_API_KEY is not set in environment variables." });
@@ -164,7 +164,7 @@ async function startServer() {
       return res.status(400).json({ error: "Missing template in request body." });
     }
     if (!Array.isArray(files) || files.length === 0) {
-      return res.status(400).json({ error: "Missing data: upload at least one CSV or PDF file." });
+      return res.status(400).json({ error: "Missing data: upload at least one CSV, PDF, or screenshot file." });
     }
 
     try {
@@ -223,6 +223,8 @@ INSTRUCTIONS:
         dataParts.push({ text: `=== File ${i + 1}: ${f.fileName} ===` });
         if (f.fileType === "pdf" && f.pdfBase64) {
           dataParts.push({ inlineData: { mimeType: "application/pdf", data: f.pdfBase64 } });
+        } else if (f.fileType === "image" && f.imageBase64) {
+          dataParts.push({ inlineData: { mimeType: f.imageMimeType || "image/png", data: f.imageBase64 } });
         } else if (f.headers && f.rows) {
           const csvTable = [
             f.headers.join(", "),

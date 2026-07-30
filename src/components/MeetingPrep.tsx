@@ -38,6 +38,11 @@ function parseCSV(text: string): { headers: string[]; rows: Record<string, strin
 
 const TEMPLATES_KEY = 'adguard_meeting_templates';
 
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp'];
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
+};
+
 type ClientMode = 'none' | 'existing' | 'new';
 
 export function MeetingPrep() {
@@ -95,7 +100,9 @@ export function MeetingPrep() {
 
   const handleFile = (file: File) => {
     setError('');
-    if (file.name.toLowerCase().endsWith('.csv')) {
+    const name = file.name.toLowerCase();
+    const imageExt = IMAGE_EXTENSIONS.find(ext => name.endsWith(ext));
+    if (name.endsWith('.csv')) {
       const reader = new FileReader();
       reader.onload = (e) => {
         const text = e.target?.result as string;
@@ -107,7 +114,7 @@ export function MeetingPrep() {
         setFiles(prev => [...prev, { fileName: file.name, fileType: 'csv', headers: parsed.headers, rows: parsed.rows }]);
       };
       reader.readAsText(file);
-    } else if (file.name.toLowerCase().endsWith('.pdf')) {
+    } else if (name.endsWith('.pdf')) {
       const reader = new FileReader();
       reader.onload = (e) => {
         const dataUrl = e.target?.result as string;
@@ -115,8 +122,17 @@ export function MeetingPrep() {
         setFiles(prev => [...prev, { fileName: file.name, fileType: 'pdf', pdfBase64: base64 }]);
       };
       reader.readAsDataURL(file);
+    } else if (imageExt) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result as string;
+        const base64 = dataUrl.split(',')[1];
+        const mimeType = IMAGE_MIME_TYPES[imageExt.slice(1)] || 'image/png';
+        setFiles(prev => [...prev, { fileName: file.name, fileType: 'image', imageBase64: base64, imageMimeType: mimeType }]);
+      };
+      reader.readAsDataURL(file);
     } else {
-      setError('Please upload a .csv or .pdf file.');
+      setError('Please upload a .csv, .pdf, or screenshot (.png/.jpg/.webp) file.');
     }
   };
 
@@ -412,7 +428,7 @@ export function MeetingPrep() {
                 <input
                   ref={fileRef}
                   type="file"
-                  accept=".csv,.pdf"
+                  accept=".csv,.pdf,.png,.jpg,.jpeg,.webp"
                   multiple
                   className="hidden"
                   onChange={(e) => { if (e.target.files?.length) handleFiles(e.target.files); e.target.value = ''; }}
@@ -427,7 +443,7 @@ export function MeetingPrep() {
                   <p className="font-semibold text-gray-900">
                     {files.length ? 'Drop more files, or click to add another' : 'Drop your files here, or click to browse'}
                   </p>
-                  <p className="text-sm text-gray-500">Supports CSV and PDF · upload as many as you need</p>
+                  <p className="text-sm text-gray-500">Supports CSV, PDF, and screenshots · upload as many as you need</p>
                 </div>
               </div>
 
@@ -441,13 +457,21 @@ export function MeetingPrep() {
                   {files.map((f, i) => (
                     <div key={i} className="flex items-center justify-between gap-3 px-5 py-3.5">
                       <div className="flex items-center gap-3 min-w-0">
-                        <div className="p-1.5 bg-emerald-100 rounded-lg flex-shrink-0">
-                          <FileText className="w-3.5 h-3.5 text-emerald-600" />
-                        </div>
+                        {f.fileType === 'image' && f.imageBase64 ? (
+                          <img
+                            src={`data:${f.imageMimeType || 'image/png'};base64,${f.imageBase64}`}
+                            alt={f.fileName}
+                            className="w-7 h-7 object-cover rounded-lg border border-emerald-200 flex-shrink-0"
+                          />
+                        ) : (
+                          <div className="p-1.5 bg-emerald-100 rounded-lg flex-shrink-0">
+                            <FileText className="w-3.5 h-3.5 text-emerald-600" />
+                          </div>
+                        )}
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-gray-900 truncate">{f.fileName}</p>
                           <p className="text-xs text-gray-500">
-                            {f.fileType === 'csv' ? `${f.rows?.length ?? 0} rows · ${f.headers?.length ?? 0} columns` : 'PDF'}
+                            {f.fileType === 'csv' ? `${f.rows?.length ?? 0} rows · ${f.headers?.length ?? 0} columns` : f.fileType === 'image' ? 'Screenshot' : 'PDF'}
                           </p>
                         </div>
                       </div>
@@ -595,7 +619,7 @@ export function MeetingPrep() {
                       <p key={i} className="text-sm font-semibold text-gray-900 truncate">
                         {f.fileName}
                         <span className="text-xs font-normal text-gray-500">
-                          {' '}— {f.fileType === 'csv' ? `${f.rows?.length ?? 0} rows` : 'PDF'}
+                          {' '}— {f.fileType === 'csv' ? `${f.rows?.length ?? 0} rows` : f.fileType === 'image' ? 'Screenshot' : 'PDF'}
                         </span>
                       </p>
                     ))}
