@@ -327,7 +327,7 @@ Output ONLY the audit request — no preamble, no "Here is the request:" opener.
   });
 
   // Ad Account Audit generation
-  app.post("/api/generate-audit", express.json({ limit: "20mb" }), async (req, res) => {
+  app.post("/api/generate-audit", express.json({ limit: "40mb" }), async (req, res) => {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return res.status(400).json({ error: "GEMINI_API_KEY is not set in environment variables." });
@@ -376,6 +376,10 @@ Output ONLY the audit request — no preamble, no "Here is the request:" opener.
           summaryRows.push(`${label}: (PDF upload — no computed totals available, read directly from the attached PDF)`);
           rawDataParts.push({ text: `=== ${label} (PDF) ===` });
           rawDataParts.push({ inlineData: { mimeType: "application/pdf", data: f.pdfBase64 } });
+        } else if (f.fileType === "image" && f.imageBase64) {
+          summaryRows.push(`${label}: (screenshot upload — no computed totals available, read directly from the attached image)`);
+          rawDataParts.push({ text: `=== ${label} (screenshot) — read all visible KPIs and figures directly from this image ===` });
+          rawDataParts.push({ inlineData: { mimeType: f.imageMimeType || "image/png", data: f.imageBase64 } });
         }
       }
 

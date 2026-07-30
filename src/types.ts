@@ -140,10 +140,12 @@ export interface PCReviewRow {
 
 export interface UploadedFileData {
   fileName: string;
-  fileType: 'csv' | 'pdf';
+  fileType: 'csv' | 'pdf' | 'image';
   headers?: string[];
   rows?: Record<string, string>[];
   pdfBase64?: string;
+  imageBase64?: string;
+  imageMimeType?: string;
 }
 
 export type PCRuleType = 'rule1' | 'rule2' | 'both';

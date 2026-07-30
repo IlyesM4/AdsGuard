@@ -82,12 +82,17 @@ Tone rules:
 
 type SlotKey = 'period7' | 'period14' | 'period30' | 'period90' | 'notes';
 
-const SLOTS: { key: SlotKey; label: string; accept: string; pdfAllowed: boolean }[] = [
-  { key: 'period7', label: 'Last 7 Days', accept: '.csv,.pdf', pdfAllowed: true },
-  { key: 'period14', label: 'Last 14 Days', accept: '.csv,.pdf', pdfAllowed: true },
-  { key: 'period30', label: 'Last 30 Days', accept: '.csv,.pdf', pdfAllowed: true },
-  { key: 'period90', label: 'Last 90 Days', accept: '.csv,.pdf', pdfAllowed: true },
-  { key: 'notes', label: 'Control Center Notes', accept: '.csv', pdfAllowed: false },
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp'];
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
+};
+
+const SLOTS: { key: SlotKey; label: string; accept: string; pdfAllowed: boolean; imageAllowed: boolean }[] = [
+  { key: 'period7', label: 'Last 7 Days', accept: '.csv,.pdf,.png,.jpg,.jpeg,.webp', pdfAllowed: true, imageAllowed: true },
+  { key: 'period14', label: 'Last 14 Days', accept: '.csv,.pdf,.png,.jpg,.jpeg,.webp', pdfAllowed: true, imageAllowed: true },
+  { key: 'period30', label: 'Last 30 Days', accept: '.csv,.pdf,.png,.jpg,.jpeg,.webp', pdfAllowed: true, imageAllowed: true },
+  { key: 'period90', label: 'Last 90 Days', accept: '.csv,.pdf,.png,.jpg,.jpeg,.webp', pdfAllowed: true, imageAllowed: true },
+  { key: 'notes', label: 'Control Center Notes', accept: '.csv', pdfAllowed: false, imageAllowed: false },
 ];
 
 function loadTemplateStore(): Record<string, string> {
@@ -107,11 +112,12 @@ function loadTemplateStore(): Record<string, string> {
 }
 
 function UploadSlot({
-  label, accept, pdfAllowed, file, onFile, onClear, error,
+  label, accept, pdfAllowed, imageAllowed, file, onFile, onClear, error,
 }: {
   label: string;
   accept: string;
   pdfAllowed: boolean;
+  imageAllowed: boolean;
   file: UploadedFileData | null;
   onFile: (file: File) => void;
   onClear: () => void;
@@ -119,6 +125,10 @@ function UploadSlot({
 }) {
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const acceptedTypesLabel = pdfAllowed
+    ? (imageAllowed ? 'CSV, PDF, or screenshot' : 'CSV or PDF')
+    : 'CSV';
 
   return (
     <div className="space-y-1.5">
@@ -151,13 +161,21 @@ function UploadSlot({
         {file ? (
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
-              <div className="p-1.5 bg-emerald-100 rounded-lg flex-shrink-0">
-                <Check className="w-3.5 h-3.5 text-emerald-600" />
-              </div>
+              {file.fileType === 'image' && file.imageBase64 ? (
+                <img
+                  src={`data:${file.imageMimeType || 'image/png'};base64,${file.imageBase64}`}
+                  alt={file.fileName}
+                  className="w-8 h-8 object-cover rounded-lg border border-emerald-200 flex-shrink-0"
+                />
+              ) : (
+                <div className="p-1.5 bg-emerald-100 rounded-lg flex-shrink-0">
+                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                </div>
+              )}
               <div className="min-w-0 text-left">
                 <p className="text-sm font-medium text-gray-900 truncate">{file.fileName}</p>
                 <p className="text-xs text-gray-500">
-                  {file.fileType === 'csv' ? `${file.rows?.length ?? 0} rows` : 'PDF'}
+                  {file.fileType === 'csv' ? `${file.rows?.length ?? 0} rows` : file.fileType === 'image' ? 'Screenshot' : 'PDF'}
                 </p>
               </div>
             </div>
@@ -172,7 +190,7 @@ function UploadSlot({
           <div className="flex flex-col items-center gap-1.5">
             <Upload className="w-5 h-5 text-gray-400" />
             <p className="text-xs text-gray-500">
-              Drop or click · {pdfAllowed ? 'CSV or PDF' : 'CSV'}
+              Drop or click · {acceptedTypesLabel}
             </p>
           </div>
         )}
@@ -205,9 +223,10 @@ export function AdAccountAudit() {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
 
-  const handleFile = (slot: SlotKey, pdfAllowed: boolean, file: File) => {
+  const handleFile = (slot: SlotKey, pdfAllowed: boolean, imageAllowed: boolean, file: File) => {
     setFileErrors(prev => ({ ...prev, [slot]: undefined }));
     const name = file.name.toLowerCase();
+    const imageExt = IMAGE_EXTENSIONS.find(ext => name.endsWith(ext));
     if (name.endsWith('.csv')) {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -228,8 +247,20 @@ export function AdAccountAudit() {
         setFiles(prev => ({ ...prev, [slot]: { fileName: file.name, fileType: 'pdf', pdfBase64: base64 } }));
       };
       reader.readAsDataURL(file);
+    } else if (imageAllowed && imageExt) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result as string;
+        const base64 = dataUrl.split(',')[1];
+        const mimeType = IMAGE_MIME_TYPES[imageExt.slice(1)] || 'image/png';
+        setFiles(prev => ({ ...prev, [slot]: { fileName: file.name, fileType: 'image', imageBase64: base64, imageMimeType: mimeType } }));
+      };
+      reader.readAsDataURL(file);
     } else {
-      setFileErrors(prev => ({ ...prev, [slot]: pdfAllowed ? 'Please upload a .csv or .pdf file.' : 'Please upload a .csv file.' }));
+      const allowedLabel = pdfAllowed
+        ? (imageAllowed ? '.csv, .pdf, or a screenshot (.png/.jpg/.webp)' : '.csv or .pdf')
+        : '.csv';
+      setFileErrors(prev => ({ ...prev, [slot]: `Please upload a ${allowedLabel} file.` }));
     }
   };
 
@@ -363,8 +394,9 @@ export function AdAccountAudit() {
                       label={slot.label}
                       accept={slot.accept}
                       pdfAllowed={slot.pdfAllowed}
+                      imageAllowed={slot.imageAllowed}
                       file={files[slot.key]}
-                      onFile={(f) => handleFile(slot.key, slot.pdfAllowed, f)}
+                      onFile={(f) => handleFile(slot.key, slot.pdfAllowed, slot.imageAllowed, f)}
                       onClear={() => clearFile(slot.key)}
                       error={fileErrors[slot.key]}
                     />
